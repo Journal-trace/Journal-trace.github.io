@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JournalTrace — анализатор USN Journal NTFS для Windows</title>
+<meta name="description" content="JournalTrace — GUI-утилита для парсинга журнала изменений NTFS (USN Journal). Продвинутые фильтры, поиск удалённых и переименованных файлов.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#070a08;
+  --bg2:#0b100c;
+  --panel:rgba(255,255,255,.035);
+  --border:rgba(120,255,170,.13);
+  --text:#e4f2e9;
+  --muted:#8fa899;
+  --green:#4ade80;
+  --green2:#a7f3c7;
+  --cyan:#22d3ee;
+  --red:#f87171;
+  --yellow:#facc15;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Space Grotesk',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden}
+::selection{background:rgba(74,222,128,.3)}
+a{color:var(--green)}
+
+/* сетка на фоне */
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:linear-gradient(rgba(120,255,170,.03) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(120,255,170,.03) 1px,transparent 1px);
+  background-size:44px 44px;
+  mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 40%,transparent 100%);
+}
+.glow{position:fixed;border-radius:50%;filter:blur(130px);pointer-events:none;z-index:0}
+.glow-1{width:560px;height:560px;background:rgba(74,222,128,.10);top:-160px;right:-120px;animation:drift 16s ease-in-out infinite}
+.glow-2{width:440px;height:440px;background:rgba(34,211,238,.07);bottom:-140px;left:-140px;animation:drift 20s ease-in-out infinite reverse}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,-30px)}}
+
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+section{padding:90px 0}
+
+/* ---------- хедер ---------- */
+header{position:fixed;top:0;left:0;right:0;z-index:100;backdrop-filter:blur(16px);
+  background:rgba(7,10,8,.7);border-bottom:1px solid var(--border)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:70px}
+.logo{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:800;font-size:18px;text-decoration:none;color:var(--text)}
+.logo-mark{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#14532d,#052e16);border:1px solid rgba(74,222,128,.4);
+  box-shadow:0 0 22px rgba(74,222,128,.25);color:var(--green);font-size:16px}
+.logo em{font-style:normal;color:var(--green)}
+nav.links{display:flex;gap:30px}
+nav.links a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px;font-family:var(--mono);transition:.25s}
+nav.links a:hover{color:var(--green2)}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:12px 24px;border-radius:10px;
+  text-decoration:none;font-weight:700;font-size:14.5px;font-family:var(--mono);
+  transition:.3s;border:1px solid transparent;cursor:pointer}
+.btn-green{background:linear-gradient(135deg,var(--green),#16a34a);color:#04160a;
+  box-shadow:0 8px 28px rgba(74,222,128,.25)}
+.btn-green:hover{transform:translateY(-2px);box-shadow:0 12px 38px rgba(74,222,128,.45)}
+.btn-ghost{border-color:var(--border);color:var(--text)}
+.btn-ghost:hover{border-color:var(--green);color:var(--green2)}
+.burger{display:none;background:none;border:none;color:var(--text);font-size:24px;cursor:pointer}
+
+/* ---------- hero ---------- */
+.hero{padding:170px 0 100px;display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:8px;
+  font-family:var(--mono);font-size:12.5px;font-weight:700;letter-spacing:.5px;
+  background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);color:var(--green2);margin-bottom:24px}
+.badge i{font-style:normal;width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 10px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+h1{font-family:var(--mono);font-weight:800;font-size:clamp(36px,5vw,58px);line-height:1.1;letter-spacing:-1px;margin-bottom:20px}
+h1 .grad{background:linear-gradient(120deg,var(--green2),var(--green) 50%,var(--cyan));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{color:var(--muted);font-size:17.5px;max-width:490px;margin-bottom:34px}
+.hero p.lead code{font-family:var(--mono);color:var(--green2);background:rgba(74,222,128,.08);padding:2px 7px;border-radius:6px;font-size:.9em}
+.hero-cta{display:flex;gap:13px;flex-wrap:wrap}
+.hero-note{margin-top:18px;font-size:13px;color:var(--muted);font-family:var(--mono)}
+
+/* терминал */
+.term{background:#050805;border:1px solid var(--border);border-radius:14px;overflow:hidden;
+  box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 60px rgba(74,222,128,.07);animation:float 7s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+.term-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)}
+.term-bar span{width:11px;height:11px;border-radius:50%}
+.t-r{background:#ff5f57}.t-y{background:#febc2e}.t-g{background:#28c840}
+.term-bar b{margin-left:10px;font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:500}
+.term-body{padding:20px;font-family:var(--mono);font-size:13px;line-height:1.9;position:relative}
+.term-body::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.015) 0 1px,transparent 1px 3px)}
+.term-body .p{color:var(--cyan)}
+.term-body .g{color:var(--green)}
+.term-body .y{color:var(--yellow)}
+.term-body .r{color:var(--red)}
+.term-body .dim{color:#5a6e60}
+.cursor{display:inline-block;width:9px;height:17px;background:var(--green);vertical-align:-3px;
+  animation:blink 1s steps(1) infinite;box-shadow:0 0 8px var(--green)}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- секции ---------- */
+.kicker{text-align:center;font-family:var(--mono);font-size:12.5px;font-weight:800;
+  letter-spacing:3px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
+h2{font-size:clamp(28px,3.8vw,42px);text-align:center;line-height:1.2;margin-bottom:14px;letter-spacing:-.5px}
+.sub{text-align:center;color:var(--muted);max-width:600px;margin:0 auto 56px;font-size:16.5px}
+
+/* демо */
+.demo{background:var(--panel);border:1px solid var(--border);border-radius:18px;overflow:hidden}
+.demo-head{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:18px 22px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.demo-head b{font-family:var(--mono);font-size:14.5px}
+.demo-head b i{font-style:normal;color:var(--green)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;
+  background:rgba(74,222,128,.07);border:1px solid var(--border);color:var(--green2);transition:.25s}
+.chip:hover{background:rgba(74,222,128,.18);border-color:var(--green)}
+.demo-input{display:flex;gap:10px;padding:18px 22px;border-bottom:1px solid var(--border)}
+.demo-input input{flex:1;min-width:0;background:#050805;border:1px solid var(--border);border-radius:10px;
+  padding:12px 16px;color:var(--green2);font-family:var(--mono);font-size:14px;outline:none;transition:.25s}
+.demo-input input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(74,222,128,.12)}
+.demo-input input::placeholder{color:#4a5c50}
+.demo-count{padding:14px 22px;font-family:var(--mono);font-size:12.5px;color:var(--muted);
+  border-bottom:1px solid var(--border)}
+.demo-count b{color:var(--green)}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;min-width:640px}
+th{text-align:left;padding:12px 22px;color:var(--muted);font-weight:600;font-size:11px;
+  letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+td{padding:11px 22px;border-bottom:1px solid rgba(255,255,255,.04)}
+tbody tr{transition:.2s}
+tbody tr:hover{background:rgba(74,222,128,.05)}
+td.usn{color:#5a6e60}
+td.name{color:var(--text)}
+.tag{display:inline-block;padding:3px 10px;border-radius:6px;font-weight:700;font-size:11px}
+.tg-r{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.3)}
+.tg-g{background:rgba(74,222,128,.1);color:var(--green);border:1px solid rgba(74,222,128,.3)}
+.tg-y{background:rgba(250,204,21,.1);color:var(--yellow);border:1px solid rgba(250,204,21,.3)}
+.tg-c{background:rgba(34,211,238,.1);color:var(--cyan);border:1px solid rgba(34,211,238,.3)}
+.tg-w{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--border)}
+.empty{padding:36px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:13px}
+.hint{padding:14px 22px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  border-top:1px solid var(--border)}
+.hint code{color:var(--green2)}
+
+/* фичи */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:28px 24px;transition:.35s;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;inset:0;opacity:0;transition:.35s;
+  background:radial-gradient(380px circle at var(--mx,50%) var(--my,0%),rgba(74,222,128,.08),transparent 60%)}
+.card:hover{transform:translateY(-5px);border-color:rgba(74,222,128,.4)}
+.card:hover::before{opacity:1}
+.ico{width:48px;height:48px;border-radius:12px;display:grid;place-items:center;font-size:22px;
+  margin-bottom:18px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25)}
+.card h3{font-size:17px;margin-bottom:9px;font-weight:700}
+.card p{color:var(--muted);font-size:14.2px}
+.card code{font-family:var(--mono);font-size:.88em;color:var(--green2)}
+
+/* фильтры-примеры */
+.code-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.code-box{background:#050805;border:1px solid var(--border);border-radius:14px;overflow:hidden;transition:.3s}
+.code-box:hover{border-color:rgba(74,222,128,.4)}
+.code-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)}
+.code-head b{font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:600}
+.copy{font-family:var(--mono);font-size:11.5px;background:none;border:1px solid var(--border);
+  color:var(--muted);padding:4px 11px;border-radius:7px;cursor:pointer;transition:.25s}
+.copy:hover{color:var(--green);border-color:var(--green)}
+.copy.ok{color:var(--green);border-color:var(--green)}
+.code-box pre{padding:16px;font-family:var(--mono);font-size:13px;color:var(--green2);overflow-x:auto}
+.code-box pre .k{color:var(--cyan)}
+.code-box pre .v{color:var(--yellow)}
+.code-box pre .n{color:var(--red)}
+.code-box .desc{padding:0 16px 14px;font-size:13px;color:var(--muted)}
+
+/* кейсы */
+.cases{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.case{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:26px 20px;text-align:center;transition:.3s}
+.case:hover{border-color:rgba(74,222,128,.4);transform:translateY(-4px)}
+.case .em{font-size:30px;margin-bottom:12px}
+.case b{display:block;font-size:15px;margin-bottom:7px}
+.case small{color:var(--muted);font-size:13px;line-height:1.5;display:block}
+
+/* тех-стек */
+.stack{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.stack span{font-family:var(--mono);font-size:13px;padding:9px 18px;border-radius:10px;
+  background:var(--panel);border:1px solid var(--border);color:var(--green2)}
+
+/* band */
+.band{border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(74,222,128,.02)}
+.band-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;text-align:center;padding:48px 0}
+.band b{font-family:var(--mono);font-size:clamp(24px,3vw,36px);color:var(--green2);display:block}
+.band small{color:var(--muted);font-size:13px;font-family:var(--mono)}
+
+/* CTA */
+.cta-box{text-align:center;border-radius:24px;padding:70px 36px;position:relative;overflow:hidden;
+  background:linear-gradient(150deg,rgba(74,222,128,.1),rgba(34,211,238,.05) 60%,transparent);
+  border:1px solid rgba(74,222,128,.3)}
+.cta-box h2{margin-bottom:12px}
+.cta-box p{color:var(--muted);margin-bottom:30px;font-family:var(--mono);font-size:14px}
+.cta-row{display:flex;gap:13px;justify-content:center;flex-wrap:wrap}
+
+/* футер */
+footer.site{border-top:1px solid var(--border);padding:40px 0;color:var(--muted);font-size:13.5px;font-family:var(--mono)}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap}
+.foot a{color:var(--muted);text-decoration:none;margin-left:20px;transition:.25s}
+.foot a:hover{color:var(--green2)}
+.foot .disc{width:100%;font-size:11.5px;color:#4a5c50;margin-top:6px}
+
+/* reveal */
+.reveal{opacity:0;transform:translateY(30px);transition:opacity .8s ease,transform .8s ease}
+.reveal.on{opacity:1;transform:none}
+.d1{transition-delay:.1s}.d2{transition-delay:.2s}.d3{transition-delay:.3s}
+
+@media(max-width:960px){
+  .hero{grid-template-columns:1fr;padding-top:140px;text-align:center}
+  .hero p.lead,.hero-cta{margin-left:auto;margin-right:auto;justify-content:center}
+  .term{max-width:520px;margin:0 auto}
+  .grid{grid-template-columns:1fr 1fr}
+  .cases{grid-template-columns:1fr 1fr}
+  .code-grid{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  nav.links{display:none;position:absolute;top:70px;left:0;right:0;flex-direction:column;
+    background:rgba(7,10,8,.97);padding:24px;gap:18px;border-bottom:1px solid var(--border)}
+  nav.links.open{display:flex}
+  .burger{display:block}
+  .nav .btn-green{display:none}
+  .grid,.cases{grid-template-columns:1fr}
+  section{padding:64px 0}
+}
+</style>
+</head>
+<body>
+
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+
+<!-- ХЕДЕР -->
+<header>
+  <div class="wrap nav">
+    <a href="#" class="logo"><span class="logo-mark">🔍</span>Journal<em>Trace</em></a>
+    <nav class="links" id="menu">
+      <a href="#demo">Демо</a>
+      <a href="#features">Возможности</a>
+      <a href="#filters">Фильтры</a>
+      <a href="#cases">Применение</a>
+    </nav>
+    <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать</a>
+    <button class="burger" id="burger">☰</button>
+  </div>
+</header>
+
+<!-- HERO -->
+<section>
+  <div class="wrap hero">
+    <div>
+      <span class="badge"><i></i>DFIR-утилита для Windows · Open Source</span>
+      <h1>Journal<span class="grad">Trace</span><br>NTFS под лупой</h1>
+      <p class="lead">Графический парсер <code>USN Journal</code> — журнала изменений файловой системы NTFS. Видите каждое создание, удаление и переименование файлов. Фильтруйте как хотите: <code>name:.exe;reason:delete</code></p>
+      <div class="hero-cta">
+        <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать JournalTrace.exe</a>
+        <a href="#demo" class="btn btn-ghost">Попробовать демо</a>
+      </div>
+      <p class="hero-note">$ Не требует установки · Данные не покидают ваш ПК · Автор: spokwn</p>
+    </div>
+
+    <div class="term">
+      <div class="term-bar">
+        <span class="t-r"></span><span class="t-y"></span><span class="t-g"></span>
+        <b>journaltrace.exe — Windows PowerShell</b>
+      </div>
+      <div class="term-body">
+        <div><span class="p">PS C:\&gt;</span> <span class="dim">journaltrace</span></div>
+        <div><span class="g">[+]</span> Чтение USN Journal (том C:)...</div>
+        <div><span class="g">[+]</span> <span class="y">1 284 392</span> записей разобрано за 3.2s</div>
+        <div>&nbsp;</div>
+        <div><span class="dim">filter:</span> <span id="typed"></span><span class="cursor"></span></div>
+        <div>&nbsp;</div>
+        <div><span class="r">FILE_DELETE</span>  payload.exe</div>
+        <div><span class="y">RENAME</span>      RUNFORESTRUN.pf → POWERPNT.EXE.pf</div>
+        <div><span class="g">FILE_CREATE</span>  C:\Users\...\payload.exe</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ДЕМО -->
+<section id="demo" style="padding-top:30px">
+  <div class="wrap">
+    <div class="kicker reveal">Интерактивное демо</div>
+    <h2 class="reveal">Попробуйте фильтры прямо здесь</h2>
+    <p class="sub reveal">Это симуляция реальной фильтрации USN-записей — тот же синтаксис, что и в JournalTrace.</p>
+
+    <div class="demo reveal">
+      <div class="demo-head">
+        <b>USN Journal <i>· симуляция</i></b>
+        <div class="chips">
+          <span class="chip" onclick="setFilter('name:.exe')">name:.exe</span>
+          <span class="chip" onclick="setFilter('name:.pf;reason:delete')">name:.pf;reason:delete</span>
+          <span class="chip" onclick="setFilter('reason:delete !name:.tmp')">удаления без .tmp</span>
+          <span class="chip" onclick="setFilter('reason:rename')">переименования</span>
+        </div>
+      </div>
+      <div class="demo-input">
+        <input type="text" id="filterInput" placeholder="Введите фильтр: name:.exe;reason:delete" spellcheck="false">
+        <button class="btn btn-green" style="padding:11px 20px" onclick="runFilter()">▶</button>
+        <button class="btn btn-ghost" style="padding:11px 20px" onclick="setFilter('')">✕</button>
+      </div>
+      <div class="demo-count" id="count"></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>USN</th><th>File Name</th><th>Reason</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="empty" id="empty" style="display:none">// ни одна запись не подходит под фильтр</div>
+      </div>
+      <div class="hint">Синтаксис: <code>name:</code> — имя файла, <code>reason:</code> — тип операции, <code>!</code> — исключение, <code>;</code> — объединение условий (логическое И)</div>
+    </div>
+  </div>
+</section>
+
+<!-- ВОЗМОЖНОСТИ -->
+<section id="features">
+  <div class="wrap">
+    <div class="kicker reveal">Возможности</div>
+    <h2 class="reveal">Что умеет JournalTrace</h2>
+    <p class="sub reveal">Минимализм снаружи, мощность внутри.</p>
+    <div class="grid">
+      <div class="card reveal"><div class="ico">📄</div><h3>Парсинг USN Journal</h3><p>Читает журнал изменений NTFS напрямую через Win32 API и показывает каждое событие файловой системы.</p></div>
+      <div class="card reveal d1"><div class="ico">🎛️</div><h3>Продвинутые фильтры</h3><p>Комбинируйте условия: <code>name:.pf;reason:delete</code>. Исключайте шум вроде <code>svchost</code> одним символом.</p></div>
+      <div class="card reveal d2"><div class="ico">🖱️</div><h3>Графический интерфейс</h3><p>Никакого запоминания флагов — все фильтры настраиваются в GUI, но синтаксис для тех, кто любит точность.</p></div>
+      <div class="card reveal"><div class="ico">⚡</div><h3>Скорость</h3><p>Работа с журналом через нативные обёртки <code>UsnJournal</code> и <code>OpenByFileId</code> — без лишних прослоек.</p></div>
+      <div class="card reveal d1"><div class="ico">🕵️</div><h3>След действий</h3><p>Восстановите хронологию: что создано, переименовано, удалено — даже если сам файл уже не существует.</p></div>
+      <div class="card reveal d2"><div class="ico">🪶</div><h3>Один исполняемый файл</h3><p>Написано на C#, ничего не требует установки. Скачали — запустили — анализируете.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ФИЛЬТРЫ -->
+<section id="filters">
+  <div class="wrap">
+    <div class="kicker reveal">Синтаксис</div>
+    <h2 class="reveal">Фильтры, которые находят всё</h2>
+    <p class="sub reveal">Точные запросы вместо тысяч строк ручного просмотра. Нажмите «копировать» — вставьте в JournalTrace.</p>
+    <div class="code-grid">
+      <div class="code-box reveal">
+        <div class="code-head"><b>поиск исполняемых файлов</b><button class="copy" onclick="cp(this)">копировать</button></div>
+        <pre><span class="k">name:</span><span class="v">.exe</span></pre>
+        <div class="desc">Все события, связанные с .exe — создать, изменить, удалить, переименовать.</div>
+      </div>
+      <div class="code-box reveal d1">
+        <div class="code-head"><b>удалённые prefetch-файлы</b><button class="copy" onclick="cp(this)">копировать</button></div>
+        <pre><span class="k">name:</span><span class="v">.pf</span><span class="n">;</span><span class="k">reason:</span><span class="v">delete</span></pre>
+        <div class="desc">Классика форензики: кто и когда удалял файлы предзагрузки.</div>
+      </div>
+      <div class="code-box reveal">
+        <div class="code-head"><b>с исключением системного шума</b><button class="copy" onclick="cp(this)">копировать</button></div>
+        <pre><span class="k">name:</span><span class="v">.exe</span> <span class="n">!name:</span><span class="v">svchost</span></pre>
+        <div class="desc">Все .exe, кроме вечного svchost — чтобы он не забивал выдачу.</div>
+      </div>
+      <div class="code-box reveal d1">
+        <div class="code-head"><b>следы переименований</b><button class="copy" onclick="cp(this)">копировать</button></div>
+        <pre><span class="k">reason:</span><span class="v">rename</span> <span class="n">!name:</span><span class="v">.tmp</span></pre>
+        <div class="desc">Отслеживание переименований без временных файлов — часто так маскируют вредоносное ПО.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- КЕЙСЫ -->
+<section id="cases">
+  <div class="wrap">
+    <div class="kicker reveal">Применение</div>
+    <h2 class="reveal">Кому нужен JournalTrace</h2>
+    <p class="sub reveal">USN Journal — один из самых ценных источников артефактов в Windows.</p>
+    <div class="cases">
+      <div class="case reveal"><div class="em">🛡️</div><b>DFIR и расследования</b><small>Хронология инцидента: что появилось на диске, когда и в каком порядке.</small></div>
+      <div class="case reveal d1"><div class="em">🦠</div><b>Охота на малварь</b><small>Подозрительные .exe, странные переименования, зачистка журналов и prefetch.</small></div>
+      <div class="case reveal d2"><div class="em">🗄️</div><b>Аудит системы</b><small>Кто и что менял на сервере или рабочей станции — без аудита каталогов.</small></div>
+      <div class="case reveal d3"><div class="em">🔄</div><b>Восстановление данных</b><small>Узнайте, что и когда было удалено — шанс вернуть файлы из бэкапа нужной даты.</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ТЕХ-СТЕК -->
+<section style="padding-top:20px">
+  <div class="wrap">
+    <div class="stack reveal">
+      <span>C# / .NET</span><span>Win32 API</span><span>UsnJournal</span><span>OpenByFileId</span><span>GUI</span><span>Open Source</span>
+    </div>
+  </div>
+</section>
+
+<!-- BAND -->
+<section class="band">
+  <div class="wrap band-grid">
+    <div class="reveal"><b>100%</b><small>локально, без телеметрии</small></div>
+    <div class="reveal d1"><b>0</b><small>зависимостей и установки</small></div>
+    <div class="reveal d2"><b>NTFS</b><small>USN Journal, весь журнал</small></div>
+    <div class="reveal d3"><b>.exe</b><small>один файл, скачал и работай</small></div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="wrap">
+    <div class="cta-box reveal">
+      <div class="kicker">Скачать</div>
+      <h2>Загляните под капот своей файловой системы</h2>
+      <p>$ journaltrace → читать журнал → фильтровать → находить</p>
+      <div class="cta-row">
+        <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать JournalTrace.exe</a>
+        <a href="https://github.com/Journal-trace/Journal-trace.github.io" class="btn btn-ghost">Исходный код на GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ФУТЕР -->
+<footer class="site">
+  <div class="wrap foot">
+    <a href="#" class="logo"><span class="logo-mark">🔍</span>Journal<em>Trace</em></a>
+    <div>
+      <a href="https://github.com/Journal-trace/Journal-trace.github.io">GitHub</a>
+      <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download>Скачать .exe</a>
+      <a href="#demo">Демо</a>
+    </div>
+    <div>© 2025 · разработано spokwn</div>
+    <div class="disc">JournalTrace не связан с Microsoft. NTFS и Windows являются торговыми марками Microsoft Corporation.</div>
+  </div>
+</footer>
+
+<script>
+// ---------- бургер ----------
+const burger=document.getElementById('burger'),menu=document.getElementById('menu');
+burger.onclick=()=>menu.classList.toggle('open');
+menu.querySelectorAll('a').forEach(a=>a.onclick=()=>menu.classList.remove('open'));
+
+// ---------- появление при скролле ----------
+const io=new IntersectionObserver(es=>es.forEach(e=>{
+  if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}
+}),{threshold:.15});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+// свечение под курсором на карточках
+document.querySelectorAll('.card').forEach(c=>c.onmousemove=e=>{
+  const r=c.getBoundingClientRect();
+  c.style.setProperty('--mx',e.clientX-r.left+'px');
+  c.style.setProperty('--my',e.clientY-r.top+'px');
+});
+
+// ---------- печать фильтра в hero ----------
+const queries=['name:.exe;reason:delete','name:.pf;reason:delete','name:.exe !name:svchost','reason:rename'];
+let qi=0;
+(function type(){
+  const el=document.getElementById('typed'),q=queries[qi];
+  let i=0;
+  (function put(){
+    el.textContent=q.slice(0,++i);
+    if(i<q.length)setTimeout(put,55);
+    else setTimeout(()=>{qi=(qi+1)%queries.length;erase()},2200);
+  })();
+  function erase(){
+    let j=q.length;
+    (function del(){el.textContent=q.slice(0,--j);
+      if(j>0)setTimeout(del,25);else setTimeout(type,300)})();
+  }
+})();
+
+// ---------- демо фильтрации ----------
+const records=[
+  {usn:'48213944',name:'explorer.exe',reason:'RENAME_OLD_NAME'},
+  {usn:'48213945',name:'payload.exe',reason:'FILE_CREATE'},
+  {usn:'48213951',name:'payload.exe',reason:'DATA_OVERWRITE'},
+  {usn:'48213958',name:'svchost.exe',reason:'CLOSE'},
+  {usn:'48213960',name:'payload.exe',reason:'FILE_DELETE'},
+  {usn:'48213973',name:'ChromeSetup.exe',reason:'FILE_CREATE'},
+  {usn:'48213981',name:'~DF3A92.tmp',reason:'FILE_CREATE'},
+  {usn:'48213992',name:'~DF3A92.tmp',reason:'FILE_DELETE'},
+  {usn:'48214001',name:'notes.txt',reason:'DATA_EXTEND'},
+  {usn:'48214008',name:'RUNFORESTRUN.pf',reason:'RENAME_NEW_NAME'},
+  {usn:'48214015',name:'POWERPNT.EXE.pf',reason:'FILE_DELETE'},
+  {usn:'48214020',name:'report.docx',reason:'CLOSE'},
+];
+function parseFilter(str){
+  return str.split(';').map(s=>s.trim()).filter(Boolean).map(tok=>{
+    let not=false;
+    if(tok.startsWith('!')){not=true;tok=tok.slice(1).trim()}
+    let key='name',value=tok;
+    const m=tok.match(/^(name|reason)\s*:\s*(.+)$/i);
+    if(m){key=m[1].toLowerCase();value=m[2]}
+    return{not,key,value:value.toLowerCase()};
+  });
+}
+function match(rec,f){
+  const src=(f.key==='reason'?rec.reason:rec.name).toLowerCase();
+  const hit=src.includes(f.value);
+  return f.not?!hit:hit;
+}
+function rtag(r){
+  if(r.includes('DELETE'))return'tg-r';
+  if(r.includes('CREATE'))return'tg-g';
+  if(r.includes('RENAME'))return'tg-y';
+  if(r==='CLOSE')return'tg-c';
+  return'tg-w';
+}
+function render(list){
+  const tb=document.getElementById('tbody'),empty=document.getElementById('empty');
+  tb.innerHTML=list.map(r=>
+    `<tr><td class="usn">${r.usn}</td><td class="name">${r.name}</td>
+    <td><span class="tag ${rtag(r.reason)}">${r.reason}</span></td></tr>`).join('');
+  empty.style.display=list.length?'none':'block';
+  document.getElementById('count').innerHTML=
+    `Найдено: <b>${list.length}</b> из ${records.length} записей`;
+}
+function runFilter(){
+  const val=document.getElementById('filterInput').value.trim();
+  if(!val){render(records);return}
+  const fs=parseFilter(val);
+  render(records.filter(r=>fs.every(f=>match(r,f))));
+}
+function setFilter(v){document.getElementById('filterInput').value=v;runFilter()}
+document.getElementById('filterInput').addEventListener('keydown',e=>{if(e.key==='Enter')runFilter()});
+render(records);
+
+// ---------- копирование ----------
+function cp(btn){
+  const code=btn.closest('.code-box').querySelector('pre').textContent;
+  navigator.clipboard.writeText(code.trim()).then(()=>{
+    btn.textContent='скопировано ✓';btn.classList.add('ok');
+    setTimeout(()=>{btn.textContent='копировать';btn.classList.remove('ok')},1600);
+  });
+}
+</script>
+</body>
+</html>
