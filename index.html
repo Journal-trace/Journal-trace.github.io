@@ -2,540 +2,1416 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JournalTrace — анализатор USN Journal NTFS для Windows</title>
-<meta name="description" content="JournalTrace — GUI-утилита для парсинга журнала изменений NTFS (USN Journal). Продвинутые фильтры, поиск удалённых и переименованных файлов.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>JournalTrace — загляни в след файловой системы</title>
+<meta name="description" content="GUI-инструмент для парсинга и просмотра записей NTFS USN Journal ($UsnJrnl:$J). Форензика, аудит, анализ инцидентов.">
+
+<!-- Шрифты: Space Grotesk (заголовки), Inter (текст), JetBrains Mono (лог/hex) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<!-- Lenis: плавный скролл (если CDN недоступен — нативный скролл) -->
+<script src="https://unpkg.com/lenis@1.1.14/dist/lenis.min.js" defer></script>
+
 <style>
+/* ============ ДИЗАЙН-ТОКЕНЫ ============ */
 :root{
-  --bg:#070a08;
-  --bg2:#0b100c;
-  --panel:rgba(255,255,255,.035);
-  --border:rgba(120,255,170,.13);
-  --text:#e4f2e9;
-  --muted:#8fa899;
-  --green:#4ade80;
-  --green2:#a7f3c7;
-  --cyan:#22d3ee;
-  --red:#f87171;
-  --yellow:#facc15;
-  --mono:'JetBrains Mono',monospace;
-  --sans:'Space Grotesk',sans-serif;
+  --bg0:#0A0E1A; --bg1:#05060D; --ink:#17192E;
+  --lime:#C6FF3D; --violet:#7C3AED; --coral:#FF6B6B; --cream:#F5F0E1;
+  --text:#E7EAF2; --muted:#8B93A7; --line:rgba(139,147,167,.16);
+  --glass:rgba(16,21,38,.55);
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --spring:cubic-bezier(.34,1.56,.64,1);
 }
+
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden}
-::selection{background:rgba(74,222,128,.3)}
-a{color:var(--green)}
-
-/* сетка на фоне */
-body::before{
-  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background-image:linear-gradient(rgba(120,255,170,.03) 1px,transparent 1px),
-                   linear-gradient(90deg,rgba(120,255,170,.03) 1px,transparent 1px);
-  background-size:44px 44px;
-  mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 40%,transparent 100%);
+html{scroll-behavior:auto}
+body{
+  background:linear-gradient(180deg,var(--bg0) 0%,var(--bg1) 100%);
+  color:var(--text);
+  font-family:'Inter',sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
 }
-.glow{position:fixed;border-radius:50%;filter:blur(130px);pointer-events:none;z-index:0}
-.glow-1{width:560px;height:560px;background:rgba(74,222,128,.10);top:-160px;right:-120px;animation:drift 16s ease-in-out infinite}
-.glow-2{width:440px;height:440px;background:rgba(34,211,238,.07);bottom:-140px;left:-140px;animation:drift 20s ease-in-out infinite reverse}
-@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,-30px)}}
+body.desktop{cursor:none}
+body.desktop a,body.desktop button,body.desktop input{cursor:none}
+::selection{background:var(--lime);color:var(--ink)}
+h1,h2,h3,.gro{font-family:'Space Grotesk','Inter',sans-serif}
+.mono{font-family:'JetBrains Mono',monospace}
 
-.wrap{max-width:1120px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
-section{padding:90px 0}
+/* Зернистая текстура поверх всего */
+.noise{
+  position:fixed;inset:-50%;z-index:9000;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation:grain 8s steps(10) infinite;
+}
+@keyframes grain{
+  0%,100%{transform:translate(0,0)} 10%{transform:translate(-5%,-5%)}
+  30%{transform:translate(3%,-8%)} 50%{transform:translate(-8%,4%)}
+  70%{transform:translate(6%,6%)} 90%{transform:translate(-4%,3%)}
+}
 
-/* ---------- хедер ---------- */
-header{position:fixed;top:0;left:0;right:0;z-index:100;backdrop-filter:blur(16px);
-  background:rgba(7,10,8,.7);border-bottom:1px solid var(--border)}
-.nav{display:flex;align-items:center;justify-content:space-between;height:70px}
-.logo{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:800;font-size:18px;text-decoration:none;color:var(--text)}
-.logo-mark{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
-  background:linear-gradient(135deg,#14532d,#052e16);border:1px solid rgba(74,222,128,.4);
-  box-shadow:0 0 22px rgba(74,222,128,.25);color:var(--green);font-size:16px}
-.logo em{font-style:normal;color:var(--green)}
-nav.links{display:flex;gap:30px}
-nav.links a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px;font-family:var(--mono);transition:.25s}
-nav.links a:hover{color:var(--green2)}
-.btn{display:inline-flex;align-items:center;gap:9px;padding:12px 24px;border-radius:10px;
-  text-decoration:none;font-weight:700;font-size:14.5px;font-family:var(--mono);
-  transition:.3s;border:1px solid transparent;cursor:pointer}
-.btn-green{background:linear-gradient(135deg,var(--green),#16a34a);color:#04160a;
-  box-shadow:0 8px 28px rgba(74,222,128,.25)}
-.btn-green:hover{transform:translateY(-2px);box-shadow:0 12px 38px rgba(74,222,128,.45)}
-.btn-ghost{border-color:var(--border);color:var(--text)}
-.btn-ghost:hover{border-color:var(--green);color:var(--green2)}
-.burger{display:none;background:none;border:none;color:var(--text);font-size:24px;cursor:pointer}
+/* Кастомный курсор */
+#cur-dot,#cur-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:10001;border-radius:50%;mix-blend-mode:difference;display:none}
+body.desktop #cur-dot,body.desktop #cur-ring{display:block}
+#cur-dot{width:8px;height:8px;background:#fff;transform:translate(-50%,-50%)}
+#cur-ring{width:38px;height:38px;border:1.5px solid #fff;transform:translate(-50%,-50%);transition:width .25s var(--ease-out),height .25s var(--ease-out),background .25s}
+#cur-ring.on{width:60px;height:60px;background:rgba(255,255,255,.15)}
+@media (pointer:coarse){#cur-dot,#cur-ring{display:none!important}}
 
-/* ---------- hero ---------- */
-.hero{padding:170px 0 100px;display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
-.badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:8px;
-  font-family:var(--mono);font-size:12.5px;font-weight:700;letter-spacing:.5px;
-  background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);color:var(--green2);margin-bottom:24px}
-.badge i{font-style:normal;width:7px;height:7px;border-radius:50%;background:var(--green);
-  box-shadow:0 0 10px var(--green);animation:pulse 2s infinite}
-@keyframes pulse{50%{opacity:.4}}
-h1{font-family:var(--mono);font-weight:800;font-size:clamp(36px,5vw,58px);line-height:1.1;letter-spacing:-1px;margin-bottom:20px}
-h1 .grad{background:linear-gradient(120deg,var(--green2),var(--green) 50%,var(--cyan));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-.hero p.lead{color:var(--muted);font-size:17.5px;max-width:490px;margin-bottom:34px}
-.hero p.lead code{font-family:var(--mono);color:var(--green2);background:rgba(74,222,128,.08);padding:2px 7px;border-radius:6px;font-size:.9em}
-.hero-cta{display:flex;gap:13px;flex-wrap:wrap}
-.hero-note{margin-top:18px;font-size:13px;color:var(--muted);font-family:var(--mono)}
+/* Скролл-прогресс */
+#progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:9500;
+  background:linear-gradient(90deg,var(--lime),var(--violet));
+  box-shadow:0 0 12px rgba(198,255,61,.5)}
 
-/* терминал */
-.term{background:#050805;border:1px solid var(--border);border-radius:14px;overflow:hidden;
-  box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 60px rgba(74,222,128,.07);animation:float 7s ease-in-out infinite}
-@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
-.term-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)}
-.term-bar span{width:11px;height:11px;border-radius:50%}
-.t-r{background:#ff5f57}.t-y{background:#febc2e}.t-g{background:#28c840}
-.term-bar b{margin-left:10px;font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:500}
-.term-body{padding:20px;font-family:var(--mono);font-size:13px;line-height:1.9;position:relative}
-.term-body::after{content:'';position:absolute;inset:0;pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgba(255,255,255,.015) 0 1px,transparent 1px 3px)}
-.term-body .p{color:var(--cyan)}
-.term-body .g{color:var(--green)}
-.term-body .y{color:var(--yellow)}
-.term-body .r{color:var(--red)}
-.term-body .dim{color:#5a6e60}
-.cursor{display:inline-block;width:9px;height:17px;background:var(--green);vertical-align:-3px;
-  animation:blink 1s steps(1) infinite;box-shadow:0 0 8px var(--green)}
-@keyframes blink{50%{opacity:0}}
+/* Прелоадер */
+#preloader{position:fixed;inset:0;z-index:11000;background:var(--bg0);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+  transition:opacity .6s ease,visibility .6s}
+#preloader.done{opacity:0;visibility:hidden}
+#preloader .pl-logo{width:64px;height:64px}
+#preloader .pl-name{font-family:'Space Grotesk';font-weight:700;font-size:20px;letter-spacing:.14em;text-transform:uppercase}
+#preloader .pl-name b{color:var(--lime)}
+#preloader .pl-bar{width:min(280px,64vw);height:2px;background:rgba(139,147,167,.2);border-radius:2px;overflow:hidden}
+#preloader .pl-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lime),var(--violet))}
+#preloader .pl-pct{font-family:'JetBrains Mono';font-size:12px;color:var(--muted)}
 
-/* ---------- секции ---------- */
-.kicker{text-align:center;font-family:var(--mono);font-size:12.5px;font-weight:800;
-  letter-spacing:3px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
-h2{font-size:clamp(28px,3.8vw,42px);text-align:center;line-height:1.2;margin-bottom:14px;letter-spacing:-.5px}
-.sub{text-align:center;color:var(--muted);max-width:600px;margin:0 auto 56px;font-size:16.5px}
+/* ============ NAV ============ */
+nav.top{
+  position:fixed;top:0;left:0;right:0;z-index:8000;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px clamp(18px,4vw,56px);
+  transition:background .4s,border-color .4s,padding .4s;
+  border-bottom:1px solid transparent;
+}
+nav.top.solid{background:rgba(10,14,26,.72);backdrop-filter:blur(14px);border-color:var(--line);padding-block:12px}
+.brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;font-size:17px;letter-spacing:.02em;text-decoration:none;color:var(--text)}
+.brand svg{width:26px;height:26px}
+.brand b{color:var(--lime)}
+nav .links{display:flex;gap:28px;align-items:center}
+nav .links a{color:var(--muted);text-decoration:none;font-size:14px;font-weight:500;position:relative}
+nav .links a::after{content:'';position:absolute;left:0;bottom:-4px;height:1.5px;width:0;background:var(--lime);transition:width .35s var(--ease-out)}
+nav .links a:hover{color:var(--text)}
+nav .links a:hover::after{width:100%}
+nav .gh{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:99px;padding:8px 16px;color:var(--text)!important;font-size:13.5px}
+nav .gh::after{display:none}
+nav .gh:hover{border-color:var(--lime);box-shadow:0 0 20px rgba(198,255,61,.18)}
+@media(max-width:720px){nav .links a:not(.gh){display:none}}
 
-/* демо */
-.demo{background:var(--panel);border:1px solid var(--border);border-radius:18px;overflow:hidden}
-.demo-head{display:flex;align-items:center;justify-content:space-between;gap:14px;
-  padding:18px 22px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.demo-head b{font-family:var(--mono);font-size:14.5px}
-.demo-head b i{font-style:normal;color:var(--green)}
-.chips{display:flex;gap:8px;flex-wrap:wrap}
-.chip{font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;
-  background:rgba(74,222,128,.07);border:1px solid var(--border);color:var(--green2);transition:.25s}
-.chip:hover{background:rgba(74,222,128,.18);border-color:var(--green)}
-.demo-input{display:flex;gap:10px;padding:18px 22px;border-bottom:1px solid var(--border)}
-.demo-input input{flex:1;min-width:0;background:#050805;border:1px solid var(--border);border-radius:10px;
-  padding:12px 16px;color:var(--green2);font-family:var(--mono);font-size:14px;outline:none;transition:.25s}
-.demo-input input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(74,222,128,.12)}
-.demo-input input::placeholder{color:#4a5c50}
-.demo-count{padding:14px 22px;font-family:var(--mono);font-size:12.5px;color:var(--muted);
-  border-bottom:1px solid var(--border)}
-.demo-count b{color:var(--green)}
-.tbl-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;min-width:640px}
-th{text-align:left;padding:12px 22px;color:var(--muted);font-weight:600;font-size:11px;
-  letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border)}
-td{padding:11px 22px;border-bottom:1px solid rgba(255,255,255,.04)}
-tbody tr{transition:.2s}
-tbody tr:hover{background:rgba(74,222,128,.05)}
-td.usn{color:#5a6e60}
-td.name{color:var(--text)}
-.tag{display:inline-block;padding:3px 10px;border-radius:6px;font-weight:700;font-size:11px}
-.tg-r{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.3)}
-.tg-g{background:rgba(74,222,128,.1);color:var(--green);border:1px solid rgba(74,222,128,.3)}
-.tg-y{background:rgba(250,204,21,.1);color:var(--yellow);border:1px solid rgba(250,204,21,.3)}
-.tg-c{background:rgba(34,211,238,.1);color:var(--cyan);border:1px solid rgba(34,211,238,.3)}
-.tg-w{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--border)}
-.empty{padding:36px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:13px}
-.hint{padding:14px 22px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
-  border-top:1px solid var(--border)}
-.hint code{color:var(--green2)}
+/* ============ HERO ============ */
+.hero{position:relative;min-height:100svh;display:flex;align-items:center;overflow:hidden;
+  padding:120px clamp(18px,5vw,72px) 80px;
+  background:
+    radial-gradient(ellipse 90% 60% at 70% -10%,rgba(124,58,237,.14),transparent 60%),
+    linear-gradient(180deg,var(--bg0),var(--bg1));
+}
+.hero-grid{position:absolute;inset:0;pointer-events:none;opacity:.35;
+  background-image:linear-gradient(rgba(139,147,167,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(139,147,167,.06) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 30%,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000 30%,transparent 75%);
+}
+#mesh{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+#mesh i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.16;will-change:transform}
+#mesh i:nth-child(1){width:46vw;height:46vw;background:var(--violet);top:-14%;left:-8%;animation:blob1 22s ease-in-out infinite alternate}
+#mesh i:nth-child(2){width:34vw;height:34vw;background:var(--lime);bottom:-16%;right:-6%;opacity:.09;animation:blob2 26s ease-in-out infinite alternate}
+#mesh i:nth-child(3){width:26vw;height:26vw;background:var(--coral);top:30%;left:52%;opacity:.07;animation:blob1 19s 4s ease-in-out infinite alternate-reverse}
+@keyframes blob1{to{transform:translate(9vw,7vh) scale(1.2)}}
+@keyframes blob2{to{transform:translate(-8vw,-9vh) scale(.85)}}
+#particles{position:absolute;inset:0;pointer-events:none}
 
-/* фичи */
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:28px 24px;transition:.35s;position:relative;overflow:hidden}
-.card::before{content:'';position:absolute;inset:0;opacity:0;transition:.35s;
-  background:radial-gradient(380px circle at var(--mx,50%) var(--my,0%),rgba(74,222,128,.08),transparent 60%)}
-.card:hover{transform:translateY(-5px);border-color:rgba(74,222,128,.4)}
-.card:hover::before{opacity:1}
-.ico{width:48px;height:48px;border-radius:12px;display:grid;place-items:center;font-size:22px;
-  margin-bottom:18px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25)}
-.card h3{font-size:17px;margin-bottom:9px;font-weight:700}
-.card p{color:var(--muted);font-size:14.2px}
-.card code{font-family:var(--mono);font-size:.88em;color:var(--green2)}
+.hero-inner{position:relative;z-index:2;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(24px,4vw,64px);align-items:center;max-width:1240px;margin:0 auto;width:100%;min-width:0}
+.hero-copy{min-width:0}
 
-/* фильтры-примеры */
-.code-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.code-box{background:#050805;border:1px solid var(--border);border-radius:14px;overflow:hidden;transition:.3s}
-.code-box:hover{border-color:rgba(74,222,128,.4)}
-.code-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)}
-.code-head b{font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:600}
-.copy{font-family:var(--mono);font-size:11.5px;background:none;border:1px solid var(--border);
-  color:var(--muted);padding:4px 11px;border-radius:7px;cursor:pointer;transition:.25s}
-.copy:hover{color:var(--green);border-color:var(--green)}
-.copy.ok{color:var(--green);border-color:var(--green)}
-.code-box pre{padding:16px;font-family:var(--mono);font-size:13px;color:var(--green2);overflow-x:auto}
-.code-box pre .k{color:var(--cyan)}
-.code-box pre .v{color:var(--yellow)}
-.code-box pre .n{color:var(--red)}
-.code-box .desc{padding:0 16px 14px;font-size:13px;color:var(--muted)}
+.eyebrow{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px 10px;max-width:100%;
+  border:1px solid rgba(198,255,61,.28);background:rgba(198,255,61,.06);
+  border-radius:99px;padding:7px 15px;font-family:'JetBrains Mono';font-size:12px;color:var(--lime);margin-bottom:26px;
+  box-shadow:0 0 24px rgba(198,255,61,.1) inset}
+.eyebrow .pulse{width:7px;height:7px;border-radius:50%;background:var(--lime);animation:pulse 2s infinite;flex-shrink:0}
+.eyebrow .sep{color:var(--muted)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(198,255,61,.5)}55%{box-shadow:0 0 0 7px rgba(198,255,61,0)}}
+@media(max-width:520px){
+  .eyebrow{font-size:10.5px;padding:6px 12px;gap:6px 8px;letter-spacing:0;margin-bottom:20px}
+  .eyebrow .pulse{width:6px;height:6px}
+}
 
-/* кейсы */
-.cases{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
-.case{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:26px 20px;text-align:center;transition:.3s}
-.case:hover{border-color:rgba(74,222,128,.4);transform:translateY(-4px)}
-.case .em{font-size:30px;margin-bottom:12px}
-.case b{display:block;font-size:15px;margin-bottom:7px}
-.case small{color:var(--muted);font-size:13px;line-height:1.5;display:block}
+.hero h1{font-size:clamp(38px,6.4vw,86px);line-height:1.04;font-weight:700;letter-spacing:-.03em;
+  overflow-wrap:break-word}
+.hero h1 .w{display:inline-block;overflow:hidden;vertical-align:bottom}
+.hero h1 .w>span{display:inline-block;transform:translateY(115%);transition:transform .9s var(--ease-out)}
+body.loaded .hero h1 .w>span{transform:translateY(0)}
+.hero h1 .w:nth-child(2)>span{transition-delay:.08s}
+.hero h1 .w:nth-child(3)>span{transition-delay:.16s}
+.hero h1 .accent{color:var(--lime);position:relative}
+.hero h1 .accent::after{content:'';position:absolute;left:2%;bottom:6%;height:.1em;width:96%;background:var(--violet);opacity:.55;
+  clip-path:polygon(0 35%,100% 20%,98% 90%,2% 78%);z-index:-1}
+.hero .sub{margin-top:26px;max-width:560px;color:var(--muted);font-size:clamp(15px,1.4vw,17.5px);line-height:1.65;
+  opacity:0;transform:translateY(18px);transition:all .8s .35s var(--ease-out)}
+body.loaded .hero .sub{opacity:1;transform:none}
+.hero .sub code{color:var(--cream);background:rgba(245,240,225,.08);padding:2px 7px;border-radius:6px;font-size:.88em}
+.hero .cta{margin-top:38px;display:flex;gap:16px;flex-wrap:wrap;opacity:0;transform:translateY(18px);transition:all .8s .5s var(--ease-out)}
+body.loaded .hero .cta{opacity:1;transform:none}
+.btn{display:inline-flex;align-items:center;gap:10px;border-radius:14px;padding:15px 26px;font-size:15.5px;font-weight:600;text-decoration:none;
+  transition:transform .25s var(--ease-out),box-shadow .3s;position:relative}
+.btn-lime{background:var(--lime);color:var(--ink)}
+.btn-lime:hover{transform:scale(1.05);box-shadow:0 0 34px rgba(198,255,61,.45),0 8px 28px rgba(198,255,61,.22)}
+.hero .meta{margin-top:30px;display:flex;gap:14px 22px;flex-wrap:wrap;font-family:'JetBrains Mono';font-size:12px;color:var(--muted);
+  opacity:0;transition:opacity 1s .7s}
+body.loaded .hero .meta{opacity:1}
+.hero .meta span{display:flex;align-items:center;gap:7px}
+.hero .meta i{width:5px;height:5px;border-radius:50%;background:var(--violet);flex-shrink:0}
 
-/* тех-стек */
-.stack{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-.stack span{font-family:var(--mono);font-size:13px;padding:9px 18px;border-radius:10px;
-  background:var(--panel);border:1px solid var(--border);color:var(--green2)}
-
-/* band */
-.band{border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(74,222,128,.02)}
-.band-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;text-align:center;padding:48px 0}
-.band b{font-family:var(--mono);font-size:clamp(24px,3vw,36px);color:var(--green2);display:block}
-.band small{color:var(--muted);font-size:13px;font-family:var(--mono)}
-
-/* CTA */
-.cta-box{text-align:center;border-radius:24px;padding:70px 36px;position:relative;overflow:hidden;
-  background:linear-gradient(150deg,rgba(74,222,128,.1),rgba(34,211,238,.05) 60%,transparent);
-  border:1px solid rgba(74,222,128,.3)}
-.cta-box h2{margin-bottom:12px}
-.cta-box p{color:var(--muted);margin-bottom:30px;font-family:var(--mono);font-size:14px}
-.cta-row{display:flex;gap:13px;justify-content:center;flex-wrap:wrap}
-
-/* футер */
-footer.site{border-top:1px solid var(--border);padding:40px 0;color:var(--muted);font-size:13.5px;font-family:var(--mono)}
-.foot{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap}
-.foot a{color:var(--muted);text-decoration:none;margin-left:20px;transition:.25s}
-.foot a:hover{color:var(--green2)}
-.foot .disc{width:100%;font-size:11.5px;color:#4a5c50;margin-top:6px}
-
-/* reveal */
-.reveal{opacity:0;transform:translateY(30px);transition:opacity .8s ease,transform .8s ease}
-.reveal.on{opacity:1;transform:none}
-.d1{transition-delay:.1s}.d2{transition-delay:.2s}.d3{transition-delay:.3s}
+/* 3D-кристалл-журнал */
+.crystal-wrap{position:relative;display:flex;justify-content:center;perspective:1200px;min-height:380px;
+  opacity:0;transform:scale(.9);transition:all 1.1s .4s var(--ease-out)}
+body.loaded .crystal-wrap{opacity:1;transform:none}
+.crystal-glow{position:absolute;top:50%;left:50%;width:420px;height:420px;transform:translate(-50%,-50%);
+  background:radial-gradient(circle,rgba(124,58,237,.28),rgba(198,255,61,.08) 45%,transparent 70%);filter:blur(30px);pointer-events:none}
+.crystal{position:relative;width:200px;height:200px;transform-style:preserve-3d;animation:cryspin 32s linear infinite;margin-top:40px}
+@keyframes cryspin{from{transform:rotateX(-14deg) rotateY(0deg)}to{transform:rotateX(-14deg) rotateY(360deg)}}
+.cface{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;gap:9px;padding:20px;
+  background:rgba(10,14,26,.5);border:1px solid rgba(198,255,61,.3);backdrop-filter:blur(5px);
+  box-shadow:0 0 26px rgba(124,58,237,.15) inset}
+.cface .l{font-family:'JetBrains Mono';font-size:11px;white-space:nowrap;color:var(--muted)}
+.cface .l b{color:var(--lime);font-weight:600}
+.cface .l.v b{color:#B79CFF}
+.cface:nth-child(even){border-color:rgba(124,58,237,.45)}
+.orbit{position:absolute;top:50%;left:50%;width:340px;height:340px;margin:-170px 0 0 -170px;border-radius:50%;
+  border:1.5px dashed rgba(139,147,167,.25);transform:rotateX(72deg);animation:orbitspin 16s linear infinite;pointer-events:none}
+@keyframes orbitspin{to{transform:rotateX(72deg) rotateZ(360deg)}}
+.orbit::after{content:'';position:absolute;top:-5px;left:50%;width:9px;height:9px;border-radius:50%;background:var(--lime);box-shadow:0 0 14px var(--lime)}
+.core{position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-6px;border-radius:50%;background:var(--lime);
+  box-shadow:0 0 26px 6px rgba(198,255,61,.6);animation:corep 3s ease-in-out infinite}
+@keyframes corep{50%{box-shadow:0 0 46px 12px rgba(198,255,61,.35);opacity:.8}}
 
 @media(max-width:960px){
-  .hero{grid-template-columns:1fr;padding-top:140px;text-align:center}
-  .hero p.lead,.hero-cta{margin-left:auto;margin-right:auto;justify-content:center}
-  .term{max-width:520px;margin:0 auto}
-  .grid{grid-template-columns:1fr 1fr}
-  .cases{grid-template-columns:1fr 1fr}
-  .code-grid{grid-template-columns:1fr}
+  .hero-inner{grid-template-columns:1fr}
+  .crystal-wrap{min-height:320px;order:-1}
+  .crystal{width:150px;height:150px;margin:0}
+  .orbit{width:260px;height:260px;margin:-130px 0 0 -130px}
 }
-@media(max-width:640px){
-  nav.links{display:none;position:absolute;top:70px;left:0;right:0;flex-direction:column;
-    background:rgba(7,10,8,.97);padding:24px;gap:18px;border-bottom:1px solid var(--border)}
-  nav.links.open{display:flex}
-  .burger{display:block}
-  .nav .btn-green{display:none}
-  .grid,.cases{grid-template-columns:1fr}
-  section{padding:64px 0}
+@media(max-width:520px){
+  .crystal-wrap{min-height:250px}
+  .crystal{width:120px;height:120px}
+  .cface{padding:14px;gap:7px}
+  .cface .l{font-size:9px}
+  .orbit{width:200px;height:200px;margin:-100px 0 0 -100px}
+  .crystal-glow{width:280px;height:280px}
+  .btn{width:100%;justify-content:center;padding:15px 20px}
+}
+
+/* ============ ОБЩЕЕ: секции, reveal ============ */
+section{position:relative}
+.wrap{max-width:1240px;margin:0 auto;padding:0 clamp(18px,5vw,72px)}
+.sec-head{margin-bottom:clamp(36px,5vw,64px)}
+.sec-tag{font-family:'JetBrains Mono';font-size:12.5px;color:var(--lime);letter-spacing:.18em;text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;gap:12px}
+.sec-tag::before{content:'';width:28px;height:1.5px;background:var(--lime);flex-shrink:0}
+.sec-head h2{font-size:clamp(30px,4.2vw,54px);font-weight:700;letter-spacing:-.025em;line-height:1.08;max-width:820px}
+.sec-head p{margin-top:18px;color:var(--muted);max-width:620px;line-height:1.65;font-size:16px}
+.reveal{opacity:0;transform:translateY(36px);transition:opacity .85s var(--ease-out),transform .85s var(--ease-out)}
+.reveal.in{opacity:1;transform:none}
+
+/* ============ PINNED горизонтальная секция ============ */
+.pin-wrap{height:340vh}
+.pin-sticky{position:sticky;top:0;height:100svh;overflow:hidden;display:flex;flex-direction:column;justify-content:center;
+  background:linear-gradient(180deg,transparent,rgba(5,6,13,.5) 30%,transparent)}
+.pin-label{padding:0 clamp(18px,5vw,72px);margin-bottom:30px}
+.pin-track{display:flex;gap:clamp(18px,2.5vw,32px);padding:0 clamp(18px,5vw,72px);will-change:transform;width:max-content}
+.pin-card{width:clamp(300px,34vw,460px);flex-shrink:0;border:1px solid var(--line);border-radius:24px;
+  background:var(--glass);backdrop-filter:blur(14px);padding:clamp(26px,3vw,40px);
+  display:flex;flex-direction:column;gap:18px;min-height:380px;position:relative;overflow:hidden}
+.pin-card::before{content:'';position:absolute;top:-70px;right:-70px;width:220px;height:220px;border-radius:50%;filter:blur(50px);opacity:.2}
+.pin-card:nth-child(odd)::before{background:var(--violet)}
+.pin-card:nth-child(even)::before{background:var(--lime)}
+.pin-num{font-family:'JetBrains Mono';font-size:13px;color:var(--lime)}
+.pin-card h3{font-size:clamp(21px,2vw,27px);font-weight:700;letter-spacing:-.02em}
+.pin-card p{color:var(--muted);line-height:1.65;font-size:15px;flex:1}
+.pin-card p b{color:var(--cream);font-weight:600}
+.pin-card .mini{margin-top:auto;border-top:1px dashed var(--line);padding-top:16px;font-family:'JetBrains Mono';font-size:11.5px}
+.pin-card .mini .r{display:flex;justify-content:space-between;gap:14px;padding:4px 0;color:var(--muted)}
+.pin-card .mini .r b{color:var(--cream);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pin-card .mini .r span{color:var(--lime)}
+.pin-card .mini .r span.c{color:var(--coral)}
+.pin-card .mini .r span.v{color:#B79CFF}
+.pin-progress{display:flex;gap:6px;padding:0 clamp(18px,5vw,72px);margin-top:34px}
+.pin-progress i{height:3px;flex:0 0 44px;background:rgba(139,147,167,.2);border-radius:3px;transition:background .3s}
+.pin-progress i.on{background:var(--lime)}
+@media(max-width:820px){
+  .pin-wrap{height:auto}
+  .pin-sticky{position:static;height:auto;padding:90px 0}
+  .pin-track{overflow-x:auto;width:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;transform:none!important}
+  .pin-card{scroll-snap-align:center;width:82vw;min-height:0}
+  .pin-progress{display:none}
+}
+
+/* ============ BENTO FEATURES ============ */
+.features{padding:clamp(90px,10vw,150px) 0 40px}
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:18px}
+.bcard{border:1px solid var(--line);border-radius:22px;background:var(--glass);backdrop-filter:blur(12px);
+  padding:clamp(22px,2.4vw,32px);position:relative;overflow:hidden;min-width:0;
+  transition:transform .4s var(--ease-out),border-color .4s,box-shadow .4s}
+.bcard:hover{transform:translateY(-8px);border-color:rgba(198,255,61,.4);
+  box-shadow:0 18px 44px rgba(5,6,13,.55),0 0 34px rgba(198,255,61,.12)}
+.bcard:hover.b-v{border-color:rgba(124,58,237,.55);box-shadow:0 18px 44px rgba(5,6,13,.55),0 0 38px rgba(124,58,237,.22)}
+.b-a{grid-column:span 3;grid-row:span 2;display:flex;flex-direction:column}
+.b-b{grid-column:span 3}
+.b-c,.b-d,.b-e{grid-column:span 2}
+@media(max-width:960px){.b-a{grid-column:span 6;grid-row:auto}.b-b,.b-c,.b-d,.b-e{grid-column:span 6}}
+.bcard h3{font-size:20px;font-weight:700;letter-spacing:-.015em;margin-bottom:10px;display:flex;align-items:center;gap:12px}
+.bcard h3 svg{width:21px;height:21px;flex-shrink:0}
+.bcard p{color:var(--muted);font-size:14.5px;line-height:1.6}
+.bcard p code{color:var(--cream);background:rgba(245,240,225,.08);padding:1px 6px;border-radius:5px;font-size:.9em}
+.b-a .viz{margin-top:auto;padding-top:26px}
+.vol-list{border:1px dashed var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:11px;font-family:'JetBrains Mono';font-size:13px}
+.vol{display:flex;align-items:center;gap:11px;color:var(--muted)}
+.vol .led{width:9px;height:9px;border-radius:3px;background:rgba(139,147,167,.25);transition:all .3s;flex-shrink:0}
+.vol.on{color:var(--cream)}
+.vol.on .led{background:var(--lime);box-shadow:0 0 10px rgba(198,255,61,.6)}
+.vol small{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.chip{font-family:'JetBrains Mono';font-size:11.5px;padding:5px 11px;border-radius:8px;border:1px solid;letter-spacing:.01em}
+.chip.k-del{color:var(--coral);border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.07)}
+.chip.k-ren{color:#B79CFF;border-color:rgba(124,58,237,.4);background:rgba(124,58,237,.1)}
+.chip.k-bic{color:var(--cream);border-color:rgba(245,240,225,.25);background:rgba(245,240,225,.05)}
+.chip.k-ovr{color:var(--lime);border-color:rgba(198,255,61,.35);background:rgba(198,255,61,.07)}
+.chip.k-cr{color:#9BE8A0;border-color:rgba(155,232,160,.3);background:rgba(155,232,160,.06)}
+.operators{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.op{font-family:'JetBrains Mono';font-size:12px;border-radius:9px;padding:8px 12px;background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.35);color:#CDB4FF}
+.op b{color:#fff;font-weight:600}
+.op small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px;font-family:'Inter'}
+.fcode{margin-top:14px;font-family:'JetBrains Mono';font-size:13px;background:rgba(5,6,13,.7);border:1px solid var(--line);
+  border-radius:10px;padding:12px 15px;color:var(--cream);overflow-x:auto;white-space:nowrap}
+.fcode b{color:var(--lime);font-weight:600}
+.fcode u{color:#CDB4FF;text-decoration:none}
+.frn-viz{margin-top:14px;font-family:'JetBrains Mono';font-size:12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;color:var(--muted)}
+.frn-viz .arrow{color:var(--violet);font-weight:700}
+.frn-viz .id{background:rgba(124,58,237,.14);border:1px solid rgba(124,58,237,.4);color:#CDB4FF;border-radius:7px;padding:4px 9px}
+.frn-viz .path{color:var(--cream)}
+
+/* ============ ДЕМО ============ */
+.demo{padding:clamp(90px,10vw,150px) 0}
+.term{border:1px solid var(--line);border-radius:22px;overflow:hidden;background:rgba(8,11,20,.8);
+  backdrop-filter:blur(14px);box-shadow:0 30px 80px rgba(3,4,8,.6),0 0 60px rgba(124,58,237,.08)}
+.term-bar{display:flex;align-items:center;gap:9px;padding:14px 18px;border-bottom:1px solid var(--line);background:rgba(13,17,30,.7)}
+.term-bar i{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.term-bar i:nth-child(1){background:var(--coral)}
+.term-bar i:nth-child(2){background:#FFD166}
+.term-bar i:nth-child(3){background:var(--lime)}
+.term-bar span{margin-left:10px;font-family:'JetBrains Mono';font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.term-bar .live{margin-left:auto;display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono';font-size:11px;color:var(--lime);flex-shrink:0}
+.term-bar .live i{width:7px;height:7px;background:var(--lime);animation:pulse 1.6s infinite}
+.term-filter{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
+.term-filter label{font-family:'JetBrains Mono';font-size:12px;color:var(--muted);flex-shrink:0}
+.term-filter input{flex:1;min-width:min(220px,100%);background:rgba(5,6,13,.75);border:1px solid rgba(124,58,237,.4);border-radius:10px;
+  color:var(--cream);font-family:'JetBrains Mono';font-size:14px;padding:11px 15px;outline:none;transition:border-color .3s,box-shadow .3s;caret-color:var(--lime)}
+.term-filter input:focus{border-color:var(--lime);box-shadow:0 0 22px rgba(198,255,61,.15)}
+.term-filter input.err{border-color:var(--coral)}
+.term-hint{width:100%;font-family:'JetBrains Mono';font-size:11.5px;color:var(--muted);line-height:1.7}
+.term-hint b{color:var(--lime);font-weight:600}.term-hint u{color:#CDB4FF;text-decoration:none}.term-hint s{color:var(--coral);text-decoration:none}
+.presets{display:flex;flex-wrap:wrap;gap:8px;padding:12px 18px 0}
+.preset{font-family:'JetBrains Mono';font-size:11.5px;color:var(--muted);background:rgba(245,240,225,.04);border:1px solid var(--line);
+  border-radius:99px;padding:6px 13px;transition:all .25s}
+.preset:hover{color:var(--lime);border-color:rgba(198,255,61,.45);transform:translateY(-2px)}
+.term-stat{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:13px 18px;font-family:'JetBrains Mono';font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.term-stat b{color:var(--lime);font-weight:600}
+.term-stat .bad{color:var(--coral)}
+.tbl-wrap{overflow-x:auto;max-height:420px;overflow-y:auto;position:relative}
+.tbl-wrap::-webkit-scrollbar{width:8px;height:8px}
+.tbl-wrap::-webkit-scrollbar-thumb{background:rgba(124,58,237,.4);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono';font-size:12.5px;min-width:640px}
+thead th{position:sticky;top:0;background:rgba(8,11,20,.97);text-align:left;font-weight:600;color:var(--muted);
+  padding:11px 18px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+tbody td{padding:11px 18px;border-bottom:1px solid rgba(139,147,167,.07);color:var(--cream);vertical-align:top}
+tbody tr{animation:rowin .4s var(--ease-out) both}
+@keyframes rowin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+tbody tr:hover{background:rgba(124,58,237,.06)}
+td .fname{color:var(--cream);word-break:break-all}
+td .fpath{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;word-break:break-all}
+td time{color:var(--muted);white-space:nowrap}
+.rbadge{display:inline-block;font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid;letter-spacing:.01em;white-space:nowrap}
+.r-del{color:var(--coral);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
+.r-ren{color:#CDB4FF;border-color:rgba(124,58,237,.45);background:rgba(124,58,237,.12)}
+.r-bic{color:var(--cream);border-color:rgba(245,240,225,.28);background:rgba(245,240,225,.06)}
+.r-ovr{color:var(--lime);border-color:rgba(198,255,61,.4);background:rgba(198,255,61,.08)}
+.r-cr{color:#9BE8A0;border-color:rgba(155,232,160,.3);background:rgba(155,232,160,.06)}
+mark{background:rgba(198,255,61,.28);color:var(--lime);border-radius:3px;padding:0 2px}
+.demo-empty{padding:40px 18px;text-align:center;font-family:'JetBrains Mono';font-size:13px;color:var(--muted)}
+.demo-empty b{color:var(--lime)}
+.reason-legend{display:flex;flex-wrap:wrap;gap:9px;padding:15px 18px;border-top:1px solid var(--line)}
+.rl{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);border:1px solid var(--line);background:transparent;
+  border-radius:8px;padding:5px 11px;cursor:pointer;transition:all .25s}
+.rl:hover{color:var(--cream);border-color:rgba(198,255,61,.4)}
+.rl i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:7px}
+
+/* ============ ШАГИ ============ */
+.steps{padding:clamp(90px,10vw,150px) 0}
+.steps-row{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;position:relative}
+.steps-row::before{content:'';position:absolute;top:44px;left:8%;right:8%;height:1.5px;
+  background:linear-gradient(90deg,rgba(198,255,61,.4),rgba(124,58,237,.4));z-index:0}
+@media(max-width:820px){.steps-row{grid-template-columns:1fr}.steps-row::before{display:none}}
+.step{position:relative;z-index:1;border:1px solid var(--line);border-radius:22px;background:var(--glass);backdrop-filter:blur(12px);
+  padding:30px 28px 28px;transition:transform .4s var(--ease-out),border-color .4s}
+.step:hover{transform:translateY(-8px);border-color:rgba(198,255,61,.35)}
+.step .num{font-family:'Space Grotesk';font-size:52px;font-weight:700;letter-spacing:-.04em;line-height:1;
+  background:linear-gradient(135deg,var(--lime),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+.step h3{margin-top:16px;font-size:20px;font-weight:700}
+.step p{margin-top:10px;color:var(--muted);font-size:14.5px;line-height:1.6}
+.step .sviz{margin-top:20px;border:1px dashed var(--line);border-radius:12px;padding:13px 15px;font-family:'JetBrains Mono';font-size:12px;color:var(--muted)}
+.step .sviz b{color:var(--lime);font-weight:600}
+.step .sviz .ln{padding:3px 0}
+
+/* ============ FAQ ============ */
+.faq{padding:clamp(90px,10vw,150px) 0}
+.faq-list{display:flex;flex-direction:column;gap:14px;max-width:840px}
+.faq-item{border:1px solid var(--line);border-radius:18px;background:var(--glass);backdrop-filter:blur(10px);overflow:hidden;
+  transition:border-color .35s}
+.faq-item.open{border-color:rgba(198,255,61,.35)}
+.faq-q{width:100%;display:flex;align-items:center;gap:16px;padding:22px 24px;background:none;border:none;color:var(--text);
+  font-family:'Space Grotesk';font-size:18px;font-weight:700;text-align:left;letter-spacing:-.01em}
+.faq-q .plus{margin-left:auto;width:22px;height:22px;flex-shrink:0;position:relative;transition:transform .4s var(--spring)}
+.faq-q .plus::before,.faq-q .plus::after{content:'';position:absolute;top:50%;left:50%;background:var(--lime);border-radius:2px}
+.faq-q .plus::before{width:16px;height:2px;transform:translate(-50%,-50%)}
+.faq-q .plus::after{width:2px;height:16px;transform:translate(-50%,-50%);transition:opacity .3s}
+.faq-item.open .plus{transform:rotate(135deg)}
+.faq-a{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s var(--ease-out)}
+.faq-item.open .faq-a{grid-template-rows:1fr}
+.faq-a>div{overflow:hidden}
+.faq-a p{padding:0 24px 24px;color:var(--muted);line-height:1.7;font-size:15px;max-width:700px}
+.faq-a code{color:var(--cream);background:rgba(245,240,225,.08);padding:1px 6px;border-radius:5px;font-size:.9em}
+
+/* ============ FOOTER ============ */
+footer{position:relative;border-top:1px solid var(--line);padding:100px 0 50px;overflow:hidden;
+  background:linear-gradient(180deg,transparent,rgba(124,58,237,.05))}
+.foot-mark{position:absolute;left:50%;bottom:-4vw;transform:translateX(-50%);white-space:nowrap;pointer-events:none;
+  font-family:'Space Grotesk';font-weight:700;font-size:clamp(70px,15.5vw,250px);letter-spacing:-.04em;line-height:1;
+  color:transparent;-webkit-text-stroke:1px rgba(198,255,61,.13)}
+.foot-inner{position:relative;display:flex;flex-wrap:wrap;gap:40px;justify-content:space-between;align-items:flex-end}
+.foot-l .brand{font-size:22px}
+.foot-l p{margin-top:14px;color:var(--muted);font-size:13.5px;max-width:380px;line-height:1.65}
+.foot-r{display:flex;gap:26px;flex-wrap:wrap}
+.foot-r a{color:var(--muted);text-decoration:none;font-size:14px;position:relative;transition:color .25s}
+.foot-r a::after{content:'';position:absolute;left:0;bottom:-4px;height:1.5px;width:0;background:var(--lime);transition:width .35s var(--ease-out)}
+.foot-r a:hover{color:var(--text)}
+.foot-r a:hover::after{width:100%}
+.foot-base{position:relative;margin-top:60px;padding-top:24px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-family:'JetBrains Mono';font-size:11.5px;color:var(--muted)}
+.foot-base b{color:var(--lime);font-weight:400}
+.foot-hint{display:flex;align-items:center;gap:8px}
+.foot-hint svg{width:15px;height:15px}
+
+/* ============ ПАНЕЛЬ СТИКЕРОВ ============ */
+#sp-fab{position:fixed;right:18px;bottom:18px;z-index:9600;width:54px;height:54px;border-radius:16px;
+  background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  transition:transform .3s var(--spring),border-color .3s;cursor:pointer}
+#sp-fab:hover{transform:scale(1.08);border-color:rgba(198,255,61,.5)}
+#sp-fab svg{width:28px;height:28px;pointer-events:none}
+body.sp-collapsed #sp-fab{display:flex}
+
+#sticker-panel{position:fixed;right:18px;bottom:18px;z-index:9600;border-radius:20px;
+  background:var(--glass);backdrop-filter:blur(18px);border:1px solid var(--line);
+  box-shadow:0 20px 50px rgba(3,4,8,.55);width:292px;max-width:calc(100vw - 36px);overflow:hidden;
+  transform-origin:bottom right;transition:transform .45s var(--spring),opacity .3s}
+body.sp-collapsed #sticker-panel{transform:scale(.7) translateY(30px);opacity:0;pointer-events:none}
+.sp-head{display:flex;align-items:center;gap:9px;padding:13px 15px;border-bottom:1px solid var(--line)}
+.sp-head .ttl{font-family:'Space Grotesk';font-size:14px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.sp-head .cnt{font-family:'JetBrains Mono';font-size:10.5px;color:var(--muted);margin-left:auto;white-space:nowrap}
+.sp-head button{background:none;border:1px solid var(--line);border-radius:8px;width:28px;height:28px;display:flex;
+  align-items:center;justify-content:center;color:var(--muted);cursor:pointer;transition:all .25s;flex-shrink:0}
+.sp-head button:hover{color:var(--lime);border-color:rgba(198,255,61,.4)}
+.sp-head button svg{width:14px;height:14px}
+.sp-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:12px}
+.sp-grid button{background:rgba(245,240,225,.03);border:1px solid var(--line);border-radius:12px;height:52px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .3s var(--spring),border-color .3s,background .3s;touch-action:none}
+.sp-grid button:hover{transform:scale(1.14) rotate(-4deg);border-color:rgba(198,255,61,.45);background:rgba(198,255,61,.05)}
+.sp-grid button:active{transform:scale(.95)}
+.sp-grid button svg{pointer-events:none}
+.sp-foot{display:flex;gap:8px;padding:0 12px 12px}
+.sp-foot button{flex:1;font-family:'Inter';font-size:12px;font-weight:500;color:var(--muted);background:rgba(245,240,225,.03);
+  border:1px solid var(--line);border-radius:10px;padding:9px 8px;cursor:pointer;transition:all .25s;
+  display:flex;align-items:center;justify-content:center;gap:7px}
+.sp-foot button:hover{color:var(--coral);border-color:rgba(255,107,107,.45)}
+#sp-sound:hover{color:var(--lime);border-color:rgba(198,255,61,.45)!important}
+#sp-sound.on{color:var(--lime);border-color:rgba(198,255,61,.45);background:rgba(198,255,61,.07)}
+.sp-foot button svg{width:14px;height:14px}
+
+/* ============ СЛОЙ СТИКЕРОВ ============ */
+#sticker-layer{position:fixed;inset:0;pointer-events:none;z-index:9990}
+.sticker{position:absolute;left:0;top:0;pointer-events:auto;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;
+  will-change:transform;transform:translate(calc(var(--x,0px) + var(--mx,0px)),calc(var(--y,0px) + var(--my,0px))) rotate(var(--r,0deg)) scale(var(--s,1));
+  transition:transform .32s var(--ease-out),opacity .5s ease;
+  --mx:0px;--my:0px;--s:1;--r:0deg}
+.sticker.dragging{transition:none;cursor:grabbing}
+.sticker.dragging .sticker-svg{filter:drop-shadow(0 12px 16px rgba(3,4,8,.6))}
+.sticker-inner{display:block;transform-origin:50% 58%}
+.sticker-svg{display:block;filter:drop-shadow(0 3px 0 rgba(3,4,8,.55))}
+.sticker:not(.dragging):hover .sticker-inner{animation:wiggle 3s ease-in-out infinite}
+@keyframes wiggle{0%,100%{transform:rotate(0deg)}25%{transform:rotate(2deg)}75%{transform:rotate(-2deg)}}
+.sticker.sticking .sticker-inner{animation:stickspring .6s var(--spring)}
+@keyframes stickspring{0%{transform:scale(1.15) rotate(4deg)}55%{transform:scale(.93) rotate(-2deg)}100%{transform:scale(1)}}
+.sticker.unsticking{opacity:0;transform:translate(var(--x,0px),calc(var(--y,0px) - 90px)) rotate(calc(var(--r,0deg) + 18deg)) scale(.85);
+  transition:transform .55s ease-in,opacity .55s ease}
+@media (prefers-reduced-motion:reduce){
+  .sticker:not(.dragging):hover .sticker-inner{animation:none}
+  .crystal,.orbit,.noise,#mesh i,.core{animation:none!important}
+  .reveal{transition:none;opacity:1;transform:none}
+  .hero h1 .w>span,.hero .sub,.hero .cta,.hero .meta,.crystal-wrap{transition:none}
 }
 </style>
 </head>
 <body>
 
-<div class="glow glow-1"></div>
-<div class="glow glow-2"></div>
+<!-- Прелоадер -->
+<div id="preloader" aria-hidden="true">
+  <svg class="pl-logo" viewBox="0 0 64 64" fill="none">
+    <rect x="8" y="8" width="48" height="48" rx="12" stroke="#7C3AED" stroke-width="3"/>
+    <rect x="8" y="8" width="48" height="48" rx="12" fill="rgba(124,58,237,.15)"/>
+    <path d="M36 16 L22 36 H32 L28 48 L44 27 H33 Z" fill="#C6FF3D" stroke="#17192E" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="48" cy="48" r="4" fill="#C6FF3D"/>
+  </svg>
+  <div class="pl-name">Journal<b>Trace</b></div>
+  <div class="pl-bar"><i id="pl-fill"></i></div>
+  <div class="pl-pct" id="pl-pct">0%</div>
+</div>
 
-<!-- ХЕДЕР -->
-<header>
-  <div class="wrap nav">
-    <a href="#" class="logo"><span class="logo-mark">🔍</span>Journal<em>Trace</em></a>
-    <nav class="links" id="menu">
-      <a href="#demo">Демо</a>
-      <a href="#features">Возможности</a>
-      <a href="#filters">Фильтры</a>
-      <a href="#cases">Применение</a>
-    </nav>
-    <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать</a>
-    <button class="burger" id="burger">☰</button>
+<!-- Курсор / прогресс / шум -->
+<div id="cur-ring"></div><div id="cur-dot"></div>
+<div id="progress"></div>
+<div class="noise" aria-hidden="true"></div>
+
+<!-- Навигация -->
+<nav class="top" id="nav">
+  <a class="brand" href="#top" data-nav>
+    <svg viewBox="0 0 64 64" fill="none">
+      <rect x="6" y="6" width="52" height="52" rx="13" stroke="#7C3AED" stroke-width="4" fill="rgba(124,58,237,.14)"/>
+      <path d="M36 16 L22 36 H32 L28 48 L44 27 H33 Z" fill="#C6FF3D" stroke="#17192E" stroke-width="2.5" stroke-linejoin="round"/>
+    </svg>
+    Journal<b>Trace</b>
+  </a>
+  <div class="links">
+    <a href="#about" data-nav>Что это</a>
+    <a href="#features" data-nav>Возможности</a>
+    <a href="#demo" data-nav>Демо</a>
+    <a href="#faq" data-nav>FAQ</a>
+    <a class="gh" href="https://github.com/spokwn/JournalTrace" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.55v-2.1c-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.78 2.7 1.27 3.36.97.1-.75.4-1.27.73-1.56-2.55-.3-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .3.2.66.8.55A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero" id="top">
+  <div class="hero-grid"></div>
+  <div id="mesh" aria-hidden="true"><i></i><i></i><i></i></div>
+  <canvas id="particles" aria-hidden="true"></canvas>
+
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <div class="eyebrow">
+        <span class="pulse"></span>
+        <span>JournalTrace</span>
+        <span class="sep">·</span>
+        <span>GUI for NTFS USN Journal</span>
+      </div>
+      <h1>
+        <span class="w"><span>Загляни</span></span>
+        <span class="w"><span>в&nbsp;</span></span>
+        <span class="w"><span class="accent">след</span></span>
+        <span class="w"><span>&nbsp;файловой</span></span>
+        <span class="w"><span>системы</span></span>
+      </h1>
+      <p class="sub">NTFS молча записывает каждое изменение на диске в журнал <code>$UsnJrnl:$J</code> — создание, удаление, переименование, перезапись. JournalTrace читает этот журнал с выбранного тома и превращает его в живой, фильтруемый поток файловой активности.</p>
+      <div class="cta">
+        <a class="btn btn-lime" href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><path d="m6 11 6 6 6-6"/><path d="M4 21h16"/></svg>
+          Скачать
+        </a>
+      </div>
+      <div class="meta">
+        <span><i></i>Windows NTFS</span>
+        <span><i style="background:var(--lime)"></i>C# · Win32 API</span>
+        <span><i style="background:var(--coral)"></i>GNU GPL v3.0</span>
+      </div>
+    </div>
+
+    <!-- Вращающийся кристалл-журнал -->
+    <div class="crystal-wrap" aria-hidden="true">
+      <div class="crystal-glow"></div>
+      <div class="orbit"></div>
+      <div class="core"></div>
+      <div class="crystal">
+        <div class="cface" style="transform:rotateY(0deg) translateZ(100px)">
+          <div class="l"><b>USN_RECORD</b> v2.0</div><div class="l">Frn&nbsp;<b>0x0003F2A1</b></div><div class="l v">Reason&nbsp;<b>FileCreate</b></div>
+        </div>
+        <div class="cface" style="transform:rotateY(60deg) translateZ(100px)">
+          <div class="l">$UsnJrnl:$J</div><div class="l v">Reason&nbsp;<b>Rename_New</b></div><div class="l">Usn&nbsp;<b>0x8C21</b></div>
+        </div>
+        <div class="cface" style="transform:rotateY(120deg) translateZ(100px)">
+          <div class="l v">Reason&nbsp;<b>FileDelete</b></div><div class="l">MFT&nbsp;<b>0x0A4B</b></div><div class="l">journal.log</div>
+        </div>
+        <div class="cface" style="transform:rotateY(180deg) translateZ(100px)">
+          <div class="l">Parent&nbsp;<b>0x5C11</b></div><div class="l v">Data_Overwrite</div><div class="l">BasicInfoChange</div>
+        </div>
+        <div class="cface" style="transform:rotateY(240deg) translateZ(100px)">
+          <div class="l v">OpenByFileId</div><div class="l">C:\&nbsp;<b>NTFS</b></div><div class="l">filter&nbsp;<b>&amp;&amp;!!||</b></div>
+        </div>
+        <div class="cface" style="transform:rotateY(300deg) translateZ(100px)">
+          <div class="l">UsnJrnl&nbsp;<b>reader</b></div><div class="l v">trace&nbsp;<b>found!</b></div><div class="l">SecurityChange</div>
+        </div>
+      </div>
+    </div>
   </div>
 </header>
 
-<!-- HERO -->
-<section>
-  <div class="wrap hero">
-    <div>
-      <span class="badge"><i></i>DFIR-утилита для Windows · Open Source</span>
-      <h1>Journal<span class="grad">Trace</span><br>NTFS под лупой</h1>
-      <p class="lead">Графический парсер <code>USN Journal</code> — журнала изменений файловой системы NTFS. Видите каждое создание, удаление и переименование файлов. Фильтруйте как хотите: <code>name:.exe;reason:delete</code></p>
-      <div class="hero-cta">
-        <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать JournalTrace.exe</a>
-        <a href="#demo" class="btn btn-ghost">Попробовать демо</a>
-      </div>
-      <p class="hero-note">$ Не требует установки · Данные не покидают ваш ПК · Автор: spokwn</p>
-    </div>
-
-    <div class="term">
-      <div class="term-bar">
-        <span class="t-r"></span><span class="t-y"></span><span class="t-g"></span>
-        <b>journaltrace.exe — Windows PowerShell</b>
-      </div>
-      <div class="term-body">
-        <div><span class="p">PS C:\&gt;</span> <span class="dim">journaltrace</span></div>
-        <div><span class="g">[+]</span> Чтение USN Journal (том C:)...</div>
-        <div><span class="g">[+]</span> <span class="y">1 284 392</span> записей разобрано за 3.2s</div>
-        <div>&nbsp;</div>
-        <div><span class="dim">filter:</span> <span id="typed"></span><span class="cursor"></span></div>
-        <div>&nbsp;</div>
-        <div><span class="r">FILE_DELETE</span>  payload.exe</div>
-        <div><span class="y">RENAME</span>      RUNFORESTRUN.pf → POWERPNT.EXE.pf</div>
-        <div><span class="g">FILE_CREATE</span>  C:\Users\...\payload.exe</div>
+<main>
+<!-- ============ ЧТО ЭТО ТАКОЕ (pinned horizontal) ============ -->
+<section class="pin-wrap" id="about">
+  <div class="pin-sticky">
+    <div class="pin-label">
+      <div class="sec-head" style="margin-bottom:0">
+        <div class="sec-tag">01 / Что это такое</div>
+        <h2>USN Journal — «чёрный ящик» вашего диска</h2>
       </div>
     </div>
+    <div class="pin-track" id="pin-track">
+      <article class="pin-card">
+        <div class="pin-num">01</div>
+        <h3>Журнал, который нельзя обмануть</h3>
+        <p>Update Sequence Number Journal — служебный файл <b>$UsnJrnl:$J</b> на каждом томе NTFS. Файловая система пишет в него запись при каждом изменении: файл создан, удалён, переименован, перезаписан.</p>
+        <div class="mini">
+          <div class="r"><b>cmd.exe</b><span>FileCreate</span></div>
+          <div class="r"><b>~DF8C21.tmp</b><span class="c">FileDelete</span></div>
+          <div class="r"><b>doc.tmp → doc.pdf</b><span class="v">Rename_New_Name</span></div>
+        </div>
+      </article>
+      <article class="pin-card">
+        <div class="pin-num">02</div>
+        <h3>Каждая запись — улика</h3>
+        <p>Даже когда файл удалён и его имя исчезло из каталога, USN-запись остаётся: метка времени, код причины, идентификатор файла в MFT, имя и путь родителя.</p>
+        <div class="mini">
+          <div class="r"><b>14:32:07</b><span>timestamp</span></div>
+          <div class="r"><b>Frn 0x3F2A</b><span>file ref</span></div>
+          <div class="r"><b>reason mask</b><span class="v">0x0001 0002</span></div>
+        </div>
+      </article>
+      <article class="pin-card">
+        <div class="pin-num">03</div>
+        <h3>Для форензики</h3>
+        <p>Восстанавливайте таймлайн инцидента: какие исполняемые файлы появлялись, что переименовывалось, какие следы малвари остались в журнале после «зачистки».</p>
+        <div class="mini">
+          <div class="r"><b>powershell.exe</b><span>FileCreate</span></div>
+          <div class="r"><b>x.ps1 → x.png</b><span class="v">Rename_New_Name</span></div>
+          <div class="r"><b>lsass.dmp</b><span class="c">FileDelete</span></div>
+        </div>
+      </article>
+      <article class="pin-card">
+        <div class="pin-num">04</div>
+        <h3>Для аудита и анализа инцидентов</h3>
+        <p>Аномальная волна удалений в 3 часа ночи, массовые переименования, перезапись данных — JournalTrace показывает поток событий в реальном времени, а не постфактум.</p>
+        <div class="mini">
+          <div class="r"><b>03:12:44</b><span>×214 delete</span></div>
+          <div class="r"><b>03:12:59</b><span class="c">Data_Overwrite</span></div>
+          <div class="r"><b>alert</b><span class="v">incident</span></div>
+        </div>
+      </article>
+      <article class="pin-card">
+        <div class="pin-num">05</div>
+        <h3>Журнал — в читаемый поток</h3>
+        <p>JournalTrace парсит USN-записи с выбранных томов, разрешает идентификаторы файлов и даёт вам язык фильтров: включения, исключения, OR-условия — всё в одном GUI.</p>
+        <div class="mini">
+          <div class="r"><b>name:.exe!!svchost</b><span>filter</span></div>
+          <div class="r"><b>name:.pf;reason:delete</b><span class="v">multi-col</span></div>
+          <div class="r"><b>trace found!</b><span class="c">match</span></div>
+        </div>
+      </article>
+    </div>
+    <div class="pin-progress" id="pin-progress"><i class="on"></i><i></i><i></i><i></i><i></i></div>
   </div>
 </section>
 
-<!-- ДЕМО -->
-<section id="demo" style="padding-top:30px">
+<!-- ============ FEATURES BENTO ============ -->
+<section class="features" id="features">
   <div class="wrap">
-    <div class="kicker reveal">Интерактивное демо</div>
-    <h2 class="reveal">Попробуйте фильтры прямо здесь</h2>
-    <p class="sub reveal">Это симуляция реальной фильтрации USN-записей — тот же синтаксис, что и в JournalTrace.</p>
-
-    <div class="demo reveal">
-      <div class="demo-head">
-        <b>USN Journal <i>· симуляция</i></b>
-        <div class="chips">
-          <span class="chip" onclick="setFilter('name:.exe')">name:.exe</span>
-          <span class="chip" onclick="setFilter('name:.pf;reason:delete')">name:.pf;reason:delete</span>
-          <span class="chip" onclick="setFilter('reason:delete !name:.tmp')">удаления без .tmp</span>
-          <span class="chip" onclick="setFilter('reason:rename')">переименования</span>
+    <div class="sec-head reveal">
+      <div class="sec-tag">02 / Возможности</div>
+      <h2>Всё, что нужно, чтобы читать журнал как открытую книгу</h2>
+    </div>
+    <div class="bento">
+      <div class="bcard b-a reveal" data-d="0">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="#C6FF3D" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="3"/><circle cx="12" cy="12.5" r="3.2"/><path d="M7 3.5h10"/></svg>Парсинг USN Journal с выбранных томов</h3>
+        <p>Подключайте один или несколько томов NTFS одновременно — JournalTrace читает поток USN-записей через нативный Win32 API (обёртка <code>StCroixSkippers</code> для <code>UsnJournal</code>) и декодирует каждую запись в человекочитаемый вид.</p>
+        <div class="viz">
+          <div class="vol-list">
+            <div class="vol on"><span class="led"></span>C:\ <small>NTFS · $UsnJrnl:$J · чтение</small></div>
+            <div class="vol on"><span class="led"></span>D:\ <small>NTFS · $UsnJrnl:$J · чтение</small></div>
+            <div class="vol"><span class="led"></span>E:\ <small>exFAT · журнал недоступен</small></div>
+          </div>
         </div>
       </div>
-      <div class="demo-input">
-        <input type="text" id="filterInput" placeholder="Введите фильтр: name:.exe;reason:delete" spellcheck="false">
-        <button class="btn btn-green" style="padding:11px 20px" onclick="runFilter()">▶</button>
-        <button class="btn btn-ghost" style="padding:11px 20px" onclick="setFilter('')">✕</button>
+      <div class="bcard b-b b-v reveal" data-d="60">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="#B79CFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>Коды причин событий</h3>
+        <p>Каждая USN-запись несёт битовую маску причин. JournalTrace расшифровывает её в понятные флаги:</p>
+        <div class="chips">
+          <span class="chip k-del">FileDelete</span><span class="chip k-ren">Rename_New_Name</span>
+          <span class="chip k-bic">BasicInfoChange</span><span class="chip k-ovr">Data_Overwrite</span>
+          <span class="chip k-cr">FileCreate</span>
+        </div>
       </div>
-      <div class="demo-count" id="count"></div>
+      <div class="bcard b-c reveal" data-d="120">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="#C6FF3D" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Продвинутая фильтрация</h3>
+        <p>Язык выражений поверх журнала — комбинируйте условия как нужно:</p>
+        <div class="operators">
+          <span class="op"><b>&amp;&amp;</b><small>включение (AND)</small></span>
+          <span class="op"><b>!!</b><small>исключение (NOT)</small></span>
+          <span class="op"><b>||</b><small>OR-условие</small></span>
+        </div>
+      </div>
+      <div class="bcard b-d b-v reveal" data-d="180">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="#B79CFF" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="13" y="5" width="8" height="14" rx="2"/></svg>Мультиколоночные фильтры</h3>
+        <p>Точка с запятой задаёт условия для разных колонок одновременно:</p>
+        <div class="fcode"><b>name:</b>.pf<u>;</u><b>reason:</b>delete</div>
+      </div>
+      <div class="bcard b-e reveal" data-d="240">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="#C6FF3D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/><path d="m12 8-2.5 4H12l-1.5 4L14 11h-2.5L12 8Z" fill="rgba(198,255,61,.25)"/></svg>OpenByFileId</h3>
+        <p>Идентификаторы файлов из USN-записей разрешаются в реальные пути через <code>OpenByFileId</code>:</p>
+        <div class="frn-viz"><span class="id">Frn 0x0003F2A1</span><span class="arrow">→</span><span class="path">C:\Users\admin\…</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ИНТЕРАКТИВНОЕ ДЕМО ============ -->
+<section class="demo" id="demo">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="sec-tag">03 / Живое демо</div>
+      <h2>Попробуйте язык фильтров прямо здесь</h2>
+      <p>Это симулятор интерфейса JournalTrace на синтетическом сниппете журнала. Введите фильтр — и записи отфильтруются мгновенно, с подсветкой совпадений.</p>
+    </div>
+
+    <div class="term reveal" data-d="100">
+      <div class="term-bar"><i></i><i></i><i></i><span>JournalTrace — C:\ [USN Journal]</span><span class="live"><i></i>MONITORING</span></div>
+      <div class="term-filter">
+        <label for="flt">Фильтр:</label>
+        <input id="flt" class="mono" type="text" placeholder="name:.exe!!svchost" autocomplete="off" spellcheck="false">
+        <div class="term-hint"><b>col:</b>value — колонка (name, reason, path, frn) · <b>!!</b><s>исключение</s> · <u>||</u> OR · <b>&amp;&amp;</b> AND · <u>;</u> — фильтры по разным колонкам</div>
+      </div>
+      <div class="presets" id="presets">
+        <button class="preset">name:.exe!!svchost</button>
+        <button class="preset">reason:delete||rename</button>
+        <button class="preset">name:.pf;reason:delete</button>
+        <button class="preset">name:tmp&&name:~df</button>
+        <button class="preset">name:.dmp</button>
+        <button class="preset">reason:create;name:.exe</button>
+      </div>
+      <div class="term-stat"><span>Записей: <b id="stat-total">0</b></span><span>Найдено: <b id="stat-found">0</b></span><span id="stat-msg"></span></div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>USN</th><th>File Name</th><th>Reason</th></tr></thead>
-          <tbody id="tbody"></tbody>
+          <thead><tr><th style="width:90px">Time</th><th>File</th><th style="width:180px">Reason</th><th style="width:110px">FrN</th></tr></thead>
+          <tbody id="rows"></tbody>
         </table>
-        <div class="empty" id="empty" style="display:none">// ни одна запись не подходит под фильтр</div>
+        <div class="demo-empty" id="demo-empty" hidden>Ничего не найдено — попробуйте ослабить условия, например уберите <b>!!исключение</b></div>
       </div>
-      <div class="hint">Синтаксис: <code>name:</code> — имя файла, <code>reason:</code> — тип операции, <code>!</code> — исключение, <code>;</code> — объединение условий (логическое И)</div>
+      <div class="reason-legend" id="reason-legend"></div>
     </div>
   </div>
 </section>
 
-<!-- ВОЗМОЖНОСТИ -->
-<section id="features">
+<!-- ============ КАК ЭТО РАБОТАЕТ ============ -->
+<section class="steps" id="how">
   <div class="wrap">
-    <div class="kicker reveal">Возможности</div>
-    <h2 class="reveal">Что умеет JournalTrace</h2>
-    <p class="sub reveal">Минимализм снаружи, мощность внутри.</p>
-    <div class="grid">
-      <div class="card reveal"><div class="ico">📄</div><h3>Парсинг USN Journal</h3><p>Читает журнал изменений NTFS напрямую через Win32 API и показывает каждое событие файловой системы.</p></div>
-      <div class="card reveal d1"><div class="ico">🎛️</div><h3>Продвинутые фильтры</h3><p>Комбинируйте условия: <code>name:.pf;reason:delete</code>. Исключайте шум вроде <code>svchost</code> одним символом.</p></div>
-      <div class="card reveal d2"><div class="ico">🖱️</div><h3>Графический интерфейс</h3><p>Никакого запоминания флагов — все фильтры настраиваются в GUI, но синтаксис для тех, кто любит точность.</p></div>
-      <div class="card reveal"><div class="ico">⚡</div><h3>Скорость</h3><p>Работа с журналом через нативные обёртки <code>UsnJournal</code> и <code>OpenByFileId</code> — без лишних прослоек.</p></div>
-      <div class="card reveal d1"><div class="ico">🕵️</div><h3>След действий</h3><p>Восстановите хронологию: что создано, переименовано, удалено — даже если сам файл уже не существует.</p></div>
-      <div class="card reveal d2"><div class="ico">🪶</div><h3>Один исполняемый файл</h3><p>Написано на C#, ничего не требует установки. Скачали — запустили — анализируете.</p></div>
+    <div class="sec-head reveal">
+      <div class="sec-tag">04 / Как это работает</div>
+      <h2>Три шага до таймлайна файловой системы</h2>
+    </div>
+    <div class="steps-row">
+      <div class="step reveal" data-d="0">
+        <div class="num">01</div>
+        <h3>Выберите том NTFS</h3>
+        <p>JournalTrace обнаружит доступные тома и подключится к USN Journal каждого выбранного диска.</p>
+        <div class="sviz"><div class="ln">C:\ <b>NTFS</b> · $UsnJrnl:$J</div><div class="ln">D:\ <b>NTFS</b> · $UsnJrnl:$J</div></div>
+      </div>
+      <div class="step reveal" data-d="120">
+        <div class="num">02</div>
+        <h3>Примените фильтры</h3>
+        <p>Включайте, исключайте, комбинируйте — язык фильтров сужает поток до именно тех событий, которые важны.</p>
+        <div class="sviz"><b>filter:</b> name:.exe!!svchost</div>
+      </div>
+      <div class="step reveal" data-d="240">
+        <div class="num">03</div>
+        <h3>Анализируйте результаты</h3>
+        <p>Отфильтрованный поток записей с временем, причиной, путями — готовый таймлайн для расследования.</p>
+        <div class="sviz"><div class="ln">14:32:07 <b>FileDelete</b> ~DF.tmp</div><div class="ln">14:32:11 <b>Rename</b> doc→doc.pdf</div></div>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- ФИЛЬТРЫ -->
-<section id="filters">
+<!-- ============ FAQ ============ -->
+<section class="faq" id="faq">
   <div class="wrap">
-    <div class="kicker reveal">Синтаксис</div>
-    <h2 class="reveal">Фильтры, которые находят всё</h2>
-    <p class="sub reveal">Точные запросы вместо тысяч строк ручного просмотра. Нажмите «копировать» — вставьте в JournalTrace.</p>
-    <div class="code-grid">
-      <div class="code-box reveal">
-        <div class="code-head"><b>поиск исполняемых файлов</b><button class="copy" onclick="cp(this)">копировать</button></div>
-        <pre><span class="k">name:</span><span class="v">.exe</span></pre>
-        <div class="desc">Все события, связанные с .exe — создать, изменить, удалить, переименовать.</div>
+    <div class="sec-head reveal">
+      <div class="sec-tag">05 / FAQ</div>
+      <h2>Частые вопросы</h2>
+    </div>
+    <div class="faq-list">
+      <div class="faq-item reveal" data-d="0">
+        <button class="faq-q">Какие версии Windows поддерживаются?<span class="plus"></span></button>
+        <div class="faq-a"><div><p>JournalTrace работает на десктопных версиях Windows с NTFS начиная с Windows 7 — там, где служба USN Journal доступна и включена для тома. На серверных редакциях (Server 2012+) тоже всё работает: <code>$UsnJrnl:$J</code> — стандартный механизм NTFS.</p></div></div>
       </div>
-      <div class="code-box reveal d1">
-        <div class="code-head"><b>удалённые prefetch-файлы</b><button class="copy" onclick="cp(this)">копировать</button></div>
-        <pre><span class="k">name:</span><span class="v">.pf</span><span class="n">;</span><span class="k">reason:</span><span class="v">delete</span></pre>
-        <div class="desc">Классика форензики: кто и когда удалял файлы предзагрузки.</div>
+      <div class="faq-item reveal" data-d="80">
+        <button class="faq-q">Нужны ли права администратора?<span class="plus"></span></button>
+        <div class="faq-a"><div><p>Да. Чтение <code>$UsnJrnl:$J</code> и особенно разрешение идентификаторов файлов через <code>OpenByFileId</code> требуют доступа к низкоуровневым структурам тома, поэтому JournalTrace нужно запускать от имени администратора.</p></div></div>
       </div>
-      <div class="code-box reveal">
-        <div class="code-head"><b>с исключением системного шума</b><button class="copy" onclick="cp(this)">копировать</button></div>
-        <pre><span class="k">name:</span><span class="v">.exe</span> <span class="n">!name:</span><span class="v">svchost</span></pre>
-        <div class="desc">Все .exe, кроме вечного svchost — чтобы он не забивал выдачу.</div>
+      <div class="faq-item reveal" data-d="160">
+        <button class="faq-q">Можно ли экспортировать результаты?<span class="plus"></span></button>
+        <div class="faq-a"><div><p>Отфильтрованный поток записей можно сохранить для отчёта и дальнейшего анализа в инструментах таймлайнов — формат плоской таблицы легко импортируется. Следите за обновлениями в <a href="https://github.com/spokwn/JournalTrace" target="_blank" rel="noopener" style="color:var(--lime)">репозитории</a>.</p></div></div>
       </div>
-      <div class="code-box reveal d1">
-        <div class="code-head"><b>следы переименований</b><button class="copy" onclick="cp(this)">копировать</button></div>
-        <pre><span class="k">reason:</span><span class="v">rename</span> <span class="n">!name:</span><span class="v">.tmp</span></pre>
-        <div class="desc">Отслеживание переименований без временных файлов — часто так маскируют вредоносное ПО.</div>
+      <div class="faq-item reveal" data-d="240">
+        <button class="faq-q">Это бесплатно?<span class="plus"></span></button>
+        <div class="faq-a"><div><p>Да, полностью. JournalTrace распространяется по лицензии <b style="color:var(--lime);font-weight:600">GNU GPL v3.0</b>: используйте, изучайте исходники и делайте форки. Исходный код на C# открыт — <code>github.com/spokwn/JournalTrace</code>.</p></div></div>
       </div>
     </div>
   </div>
 </section>
+</main>
 
-<!-- КЕЙСЫ -->
-<section id="cases">
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="foot-mark" aria-hidden="true">JournalTrace</div>
   <div class="wrap">
-    <div class="kicker reveal">Применение</div>
-    <h2 class="reveal">Кому нужен JournalTrace</h2>
-    <p class="sub reveal">USN Journal — один из самых ценных источников артефактов в Windows.</p>
-    <div class="cases">
-      <div class="case reveal"><div class="em">🛡️</div><b>DFIR и расследования</b><small>Хронология инцидента: что появилось на диске, когда и в каком порядке.</small></div>
-      <div class="case reveal d1"><div class="em">🦠</div><b>Охота на малварь</b><small>Подозрительные .exe, странные переименования, зачистка журналов и prefetch.</small></div>
-      <div class="case reveal d2"><div class="em">🗄️</div><b>Аудит системы</b><small>Кто и что менял на сервере или рабочей станции — без аудита каталогов.</small></div>
-      <div class="case reveal d3"><div class="em">🔄</div><b>Восстановление данных</b><small>Узнайте, что и когда было удалено — шанс вернуть файлы из бэкапа нужной даты.</small></div>
-    </div>
-  </div>
-</section>
-
-<!-- ТЕХ-СТЕК -->
-<section style="padding-top:20px">
-  <div class="wrap">
-    <div class="stack reveal">
-      <span>C# / .NET</span><span>Win32 API</span><span>UsnJournal</span><span>OpenByFileId</span><span>GUI</span><span>Open Source</span>
-    </div>
-  </div>
-</section>
-
-<!-- BAND -->
-<section class="band">
-  <div class="wrap band-grid">
-    <div class="reveal"><b>100%</b><small>локально, без телеметрии</small></div>
-    <div class="reveal d1"><b>0</b><small>зависимостей и установки</small></div>
-    <div class="reveal d2"><b>NTFS</b><small>USN Journal, весь журнал</small></div>
-    <div class="reveal d3"><b>.exe</b><small>один файл, скачал и работай</small></div>
-  </div>
-</section>
-
-<!-- CTA -->
-<section>
-  <div class="wrap">
-    <div class="cta-box reveal">
-      <div class="kicker">Скачать</div>
-      <h2>Загляните под капот своей файловой системы</h2>
-      <p>$ journaltrace → читать журнал → фильтровать → находить</p>
-      <div class="cta-row">
-        <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download class="btn btn-green">⬇ Скачать JournalTrace.exe</a>
-        <a href="https://github.com/Journal-trace/Journal-trace.github.io" class="btn btn-ghost">Исходный код на GitHub</a>
+    <div class="foot-inner">
+      <div class="foot-l">
+        <a class="brand" href="#top" data-nav>
+          <svg viewBox="0 0 64 64" fill="none"><rect x="6" y="6" width="52" height="52" rx="13" stroke="#7C3AED" stroke-width="4" fill="rgba(124,58,237,.14)"/><path d="M36 16 L22 36 H32 L28 48 L44 27 H33 Z" fill="#C6FF3D" stroke="#17192E" stroke-width="2.5" stroke-linejoin="round"/></svg>
+          Journal<b>Trace</b>
+        </a>
+        <p>GUI-инструмент для парсинга и просмотра записей NTFS USN Journal. Форензика, аудит, анализ инцидентов — след файловой системы, оставленный в открытом доступе.</p>
+      </div>
+      <div class="foot-r">
+        <a href="https://github.com/spokwn/JournalTrace" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/spokwn/JournalTrace#readme" target="_blank" rel="noopener">Документация</a>
+        <a href="https://github.com/spokwn/JournalTrace/blob/master/LICENSE" target="_blank" rel="noopener">GPL v3.0</a>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- ФУТЕР -->
-<footer class="site">
-  <div class="wrap foot">
-    <a href="#" class="logo"><span class="logo-mark">🔍</span>Journal<em>Trace</em></a>
-    <div>
-      <a href="https://github.com/Journal-trace/Journal-trace.github.io">GitHub</a>
-      <a href="https://github.com/Journal-trace/Journal-trace.github.io/releases/download/JournalTrace/JournalTrace.exe" download>Скачать .exe</a>
-      <a href="#demo">Демо</a>
+    <div class="foot-base">
+      <span>© 2024 JournalTrace · <b>GNU GPL v3.0</b> · C# / Win32</span>
+      <span class="foot-hint">
+        <svg viewBox="0 0 100 100" fill="none"><path d="M50 10 C53 38 62 47 90 50 C62 53 53 62 50 90 C47 62 38 53 10 50 C38 47 47 38 50 10 Z" fill="currentColor" style="color:var(--lime)"/></svg>
+        Стикеры можно клеить и тут
+      </span>
     </div>
-    <div>© 2025 · разработано spokwn</div>
-    <div class="disc">JournalTrace не связан с Microsoft. NTFS и Windows являются торговыми марками Microsoft Corporation.</div>
   </div>
 </footer>
 
+<!-- ============ ПАНЕЛЬ СТИКЕРОВ ============ -->
+<button id="sp-fab" aria-label="Открыть панель стикеров"></button>
+<aside id="sticker-panel" aria-label="Панель стикеров">
+  <div class="sp-head">
+    <span class="ttl">Стикеры</span>
+    <span class="cnt" id="sp-cnt">0 на странице</span>
+    <button id="sp-sound" title="Звук «pop» при приклеивании" aria-label="Переключить звук">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+    </button>
+    <button id="sp-collapse" title="Свернуть панель" aria-label="Свернуть панель">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div>
+  <div class="sp-grid" id="sp-grid"></div>
+  <div class="sp-foot">
+    <button id="sp-clear">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M10 4h4M7 7l1 13h8l1-13"/></svg>
+      Снять все стикеры
+    </button>
+  </div>
+</aside>
+
+<!-- Слой приклеенных стикеров -->
+<div id="sticker-layer"></div>
+
 <script>
-// ---------- бургер ----------
-const burger=document.getElementById('burger'),menu=document.getElementById('menu');
-burger.onclick=()=>menu.classList.toggle('open');
-menu.querySelectorAll('a').forEach(a=>a.onclick=()=>menu.classList.remove('open'));
+'use strict';
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TOUCH=matchMedia('(pointer: coarse)').matches;
+if(!TOUCH)document.body.classList.add('desktop');
 
-// ---------- появление при скролле ----------
-const io=new IntersectionObserver(es=>es.forEach(e=>{
-  if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}
-}),{threshold:.15});
-document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
-
-// свечение под курсором на карточках
-document.querySelectorAll('.card').forEach(c=>c.onmousemove=e=>{
-  const r=c.getBoundingClientRect();
-  c.style.setProperty('--mx',e.clientX-r.left+'px');
-  c.style.setProperty('--my',e.clientY-r.top+'px');
-});
-
-// ---------- печать фильтра в hero ----------
-const queries=['name:.exe;reason:delete','name:.pf;reason:delete','name:.exe !name:svchost','reason:rename'];
-let qi=0;
-(function type(){
-  const el=document.getElementById('typed'),q=queries[qi];
-  let i=0;
-  (function put(){
-    el.textContent=q.slice(0,++i);
-    if(i<q.length)setTimeout(put,55);
-    else setTimeout(()=>{qi=(qi+1)%queries.length;erase()},2200);
-  })();
-  function erase(){
-    let j=q.length;
-    (function del(){el.textContent=q.slice(0,--j);
-      if(j>0)setTimeout(del,25);else setTimeout(type,300)})();
-  }
+/* ============ Прелоадер ============ */
+(()=>{
+  const fill=$('#pl-fill'), pct=$('#pl-pct'), pl=$('#preloader');
+  const t0=performance.now(), DUR=1500;
+  (function tick(now){
+    const p=clamp((now-t0)/DUR,0,1), e=1-Math.pow(1-p,3);
+    fill.style.width=(e*100)+'%'; pct.textContent=Math.round(e*100)+'%';
+    if(p<1)requestAnimationFrame(tick);
+    else{ pl.classList.add('done'); document.body.classList.add('loaded');
+      setTimeout(()=>pl.remove(),700); }
+  })(t0);
 })();
 
-// ---------- демо фильтрации ----------
-const records=[
-  {usn:'48213944',name:'explorer.exe',reason:'RENAME_OLD_NAME'},
-  {usn:'48213945',name:'payload.exe',reason:'FILE_CREATE'},
-  {usn:'48213951',name:'payload.exe',reason:'DATA_OVERWRITE'},
-  {usn:'48213958',name:'svchost.exe',reason:'CLOSE'},
-  {usn:'48213960',name:'payload.exe',reason:'FILE_DELETE'},
-  {usn:'48213973',name:'ChromeSetup.exe',reason:'FILE_CREATE'},
-  {usn:'48213981',name:'~DF3A92.tmp',reason:'FILE_CREATE'},
-  {usn:'48213992',name:'~DF3A92.tmp',reason:'FILE_DELETE'},
-  {usn:'48214001',name:'notes.txt',reason:'DATA_EXTEND'},
-  {usn:'48214008',name:'RUNFORESTRUN.pf',reason:'RENAME_NEW_NAME'},
-  {usn:'48214015',name:'POWERPNT.EXE.pf',reason:'FILE_DELETE'},
-  {usn:'48214020',name:'report.docx',reason:'CLOSE'},
-];
-function parseFilter(str){
-  return str.split(';').map(s=>s.trim()).filter(Boolean).map(tok=>{
-    let not=false;
-    if(tok.startsWith('!')){not=true;tok=tok.slice(1).trim()}
-    let key='name',value=tok;
-    const m=tok.match(/^(name|reason)\s*:\s*(.+)$/i);
-    if(m){key=m[1].toLowerCase();value=m[2]}
-    return{not,key,value:value.toLowerCase()};
-  });
-}
-function match(rec,f){
-  const src=(f.key==='reason'?rec.reason:rec.name).toLowerCase();
-  const hit=src.includes(f.value);
-  return f.not?!hit:hit;
-}
-function rtag(r){
-  if(r.includes('DELETE'))return'tg-r';
-  if(r.includes('CREATE'))return'tg-g';
-  if(r.includes('RENAME'))return'tg-y';
-  if(r==='CLOSE')return'tg-c';
-  return'tg-w';
-}
-function render(list){
-  const tb=document.getElementById('tbody'),empty=document.getElementById('empty');
-  tb.innerHTML=list.map(r=>
-    `<tr><td class="usn">${r.usn}</td><td class="name">${r.name}</td>
-    <td><span class="tag ${rtag(r.reason)}">${r.reason}</span></td></tr>`).join('');
-  empty.style.display=list.length?'none':'block';
-  document.getElementById('count').innerHTML=
-    `Найдено: <b>${list.length}</b> из ${records.length} записей`;
-}
-function runFilter(){
-  const val=document.getElementById('filterInput').value.trim();
-  if(!val){render(records);return}
-  const fs=parseFilter(val);
-  render(records.filter(r=>fs.every(f=>match(r,f))));
-}
-function setFilter(v){document.getElementById('filterInput').value=v;runFilter()}
-document.getElementById('filterInput').addEventListener('keydown',e=>{if(e.key==='Enter')runFilter()});
-render(records);
+/* ============ Lenis: плавный скролл ============ */
+let lenis=null;
+window.addEventListener('load',()=>{
+  if(typeof Lenis!=='undefined' && !RM){
+    lenis=new Lenis({duration:1.15,smoothWheel:true});
+    (function raf(t){lenis.raf(t);requestAnimationFrame(raf);})(0);
+  }
+});
+ $$('[data-nav]').forEach(a=>a.addEventListener('click',e=>{
+  const el=$(a.getAttribute('href')); if(!el)return; e.preventDefault();
+  if(lenis)lenis.scrollTo(el,{offset:-70}); else el.scrollIntoView({behavior:'smooth'});
+}));
 
-// ---------- копирование ----------
-function cp(btn){
-  const code=btn.closest('.code-box').querySelector('pre').textContent;
-  navigator.clipboard.writeText(code.trim()).then(()=>{
-    btn.textContent='скопировано ✓';btn.classList.add('ok');
-    setTimeout(()=>{btn.textContent='копировать';btn.classList.remove('ok')},1600);
+/* ============ Курсор + прогресс + nav ============ */
+(()=>{
+  const dot=$('#cur-dot'), ring=$('#cur-ring');
+  let mx=innerWidth/2,my=innerHeight/2,rx=mx,ry=my;
+  addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;
+    const t=e.target.closest('a,button,input,.sticker,.faq-q,.rl');
+    ring.classList.toggle('on',!!t);});
+  addEventListener('mouseleave',()=>{mx=-100;my=-100;});
+  (function loop(){rx+=(mx-rx)*.16;ry+=(my-ry)*.16;
+    dot.style.transform=`translate(${mx-4}px,${my-4}px)`;
+    ring.style.transform=`translate(${rx-19}px,${ry-19}px)`;
+    requestAnimationFrame(loop);})();
+})();
+const onScroll=()=>{
+  const max=document.documentElement.scrollHeight-innerHeight;
+  $('#progress').style.width=(max>0?clamp(scrollY/max,0,1)*100:0)+'%';
+  $('#nav').classList.toggle('solid',scrollY>40);
+};
+addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+/* ============ Reveal-анимации ============ */
+const io=new IntersectionObserver(es=>es.forEach(e=>{
+  if(e.isIntersecting){const el=e.target;
+    setTimeout(()=>el.classList.add('in'),+(el.dataset.d||0)); io.unobserve(el);}
+}),{threshold:.12,rootMargin:'0px 0px -40px 0px'});
+ $$('.reveal').forEach(el=>io.observe(el));
+
+/* ============ Pinned горизонтальная секция ============ */
+(()=>{
+  const sec=$('.pin-wrap'), track=$('#pin-track'), pins=$$('#pin-progress i');
+  const mobile=()=>matchMedia('(max-width:820px)').matches;
+  function upd(){
+    if(mobile())return;
+    const r=sec.getBoundingClientRect(), vh=innerHeight;
+    const total=sec.offsetHeight-vh;
+    const p=clamp(-r.top/total,0,1);
+    const maxX=track.scrollWidth-innerWidth+parseFloat(getComputedStyle(track).paddingLeft)*2;
+    track.style.transform=`translateX(${-p*maxX}px)`;
+    pins.forEach((i,idx)=>i.classList.toggle('on',p>=(idx-0.15)/pins.length));
+  }
+  addEventListener('scroll',()=>requestAnimationFrame(upd),{passive:true});
+  addEventListener('resize',upd); upd();
+})();
+
+/* ============ Частицы в hero ============ */
+(()=>{
+  const cv=$('#particles'), ctx=cv.getContext('2d'); if(!ctx)return;
+  let W,H,pts=[],run=true,dpr=Math.min(devicePixelRatio||1,2);
+  const mouse={x:-999,y:-999};
+  function size(){W=cv.clientWidth;H=cv.clientHeight;
+    cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+    const n=clamp(Math.round(W*H/16000),30,90); pts=[];
+    for(let i=0;i<n;i++)pts.push({x:Math.random()*W,y:Math.random()*H,
+      vx:(Math.random()-.5)*.35,vy:(Math.random()-.5)*.35,
+      c:Math.random()<.6?'198,255,61':'179,156,255'});
+  }
+  size(); addEventListener('resize',size);
+  cv.parentElement.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();mouse.x=e.clientX-r.left;mouse.y=e.clientY-r.top;});
+  new IntersectionObserver(es=>run=es[0].isIntersecting).observe(cv);
+  (function draw(){
+    if(run){ctx.clearRect(0,0,W,H);
+      for(const p of pts){
+        const dx=p.x-mouse.x,dy=p.y-mouse.y,d=Math.hypot(dx,dy);
+        if(d<120&&d>1){p.vx+=dx/d*.02;p.vy+=dy/d*.02;}
+        p.vx=clamp(p.vx,-.7,.7);p.vy=clamp(p.vy,-.7,.7);
+        p.x+=p.vx;p.y+=p.vy;
+        if(p.x<-10)p.x=W+10;if(p.x>W+10)p.x=-10;if(p.y<-10)p.y=H+10;if(p.y>H+10)p.y=-10;
+        ctx.fillStyle=`rgba(${p.c},.55)`;ctx.beginPath();ctx.arc(p.x,p.y,1.6,0,7);ctx.fill();
+      }
+      for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){
+        const a=pts[i],b=pts[j],d=Math.hypot(a.x-b.x,a.y-b.y);
+        if(d<110){ctx.strokeStyle=`rgba(139,147,167,${(1-d/110)*.13})`;
+          ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+      }}
+    requestAnimationFrame(draw);
+  })();
+})();
+
+/* ============ FAQ аккордеон ============ */
+ $$('.faq-item').forEach(it=>$('.faq-q',it).addEventListener('click',()=>{
+  const open=it.classList.contains('open');
+  $$('.faq-item.open').forEach(o=>o.classList.remove('open'));
+  if(!open)it.classList.add('open');
+}));
+
+/* ================================================================
+   STICKERKIT — 10 авторских SVG-стикеров (фабрики со string-SVG)
+================================================================ */
+const StickerKit=(()=>{
+  let uid=0; const id=p=>`jt${++uid}${p}`;
+  const SK='#C6FF3D', VI='#7C3AED', CO='#FF6B6B', CR='#F5F0E1', IN='#17192E';
+  const OUT=f=>`<filter id="${f}" x="-25%" y="-25%" width="150%" height="150%">
+    <feMorphology in="SourceAlpha" operator="dilate" radius="4" result="d"/>
+    <feFlood flood-color="#FFFFFF"/><feComposite in2="d" operator="in" result="o"/>
+    <feMerge><feMergeNode in="o"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  const base=(defs,body,opts={})=>{
+    const s=opts.size||48, col=opts.color||SK;
+    return `<svg class="sticker-svg" width="${s}" height="${s}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:${col}" role="img">
+      <defs>${defs}</defs><g filter="url(#${opts.f})" stroke="${IN}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
+  };
+
+  /* 1. Журнал — раскрытый блокнот с закладками и строкой лога */
+  const journal=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FBF8EC"/><stop offset="1" stop-color="#E8E0C8"/></linearGradient>
+      <linearGradient id="${id('g2')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9D68F2"/><stop offset="1" stop-color="${VI}"/></linearGradient>${OUT(f)}`,
+    `<path d="M50 27 C 39 20 24 20 15 24 L15 76 C 24 72 38 73 50 80 C 62 73 76 72 85 76 L85 24 C 76 20 61 20 50 27 Z" fill="url(#${id('g')})"/>
+     <path d="M15 24 C 24 20 39 20 50 27 L50 80 C 38 73 24 72 15 76 Z" fill="url(#${id('g2')})" opacity=".18"/>
+     <path d="M50 27 L50 80"/>
+     <path d="M20 19 l0 -9 8 -1 0 15 c-5 3 -9 -1 -8 -5 Z" fill="${SK}"/>
+     <path d="M45 16 l0 -9 9 0 0 18 c-5 2 -9 -3 -9 -9 Z" fill="${VI}"/>
+     <path d="M68 19 l0 -7 8 0 0 14 c-5 3 -8 0 -8 -7 Z" fill="${CO}"/>
+     <path d="M23 42 q 9 -1.5 19 0 M23 51 q 9 -1 19 0" stroke="currentColor" stroke-width="1.8" opacity=".55"/>
+     <path d="M24 60 l 18 0 -2.5 7 -17 0 Z" fill="${SK}" stroke-width="2"/>
+     <path d="M58 42 q 9 -1.5 18 0 M58 51 q 9 -1 18 0 M58 60 q 6 -1 12 0" opacity=".5" stroke-width="1.8"/>
+     <circle cx="62" cy="68" r="2" fill="currentColor" stroke="none" opacity=".7"/><circle cx="69" cy="68" r="2" fill="${CO}" stroke="none"/><circle cx="76" cy="68" r="2" fill="${VI}" stroke="none"/>`,
+    {...o,f});};
+
+  /* 2. Лупа поверх файла — внутри hex-код */
+  const magnify=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FDFAF0" stop-opacity=".95"/><stop offset="1" stop-color="#DDD7BE" stop-opacity=".9"/></linearGradient>
+      <linearGradient id="${id('g2')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${SK}"/><stop offset="1" stop-color="#8FE21F"/></linearGradient>${OUT(f)}`,
+    `<circle cx="42" cy="41" r="26" fill="url(#${id('g')})" stroke-width="3"/>
+     <text x="28" y="34" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="600" fill="${IN}" stroke="none">0x4A</text>
+     <text x="28" y="45" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="600" fill="${VI}" stroke="none">55 53</text>
+     <text x="28" y="56" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="600" fill="${IN}" stroke="none">4E 3A</text>
+     <path d="M28 63 q 7 2 13 1" stroke="currentColor" stroke-width="1.6" opacity=".5"/>
+     <path d="M30 24 q 5 -5 12 -5" stroke="#FFFFFF" stroke-width="3" opacity=".8"/>
+     <path d="M60 60 L72 72" stroke="${IN}" stroke-width="9"/>
+     <path d="M60 60 L72 72" stroke="url(#${id('g2')})" stroke-width="4.5"/>`,
+    {...o,f});};
+
+  /* 3. Диск NTFS с гравировкой $UsnJrnl */
+  const disk=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9D68F2"/><stop offset="1" stop-color="#5B2BB8"/></linearGradient>${OUT(f)}`,
+    `<rect x="12" y="24" width="76" height="52" rx="9" fill="url(#${id('g')})"/>
+     <rect x="12" y="24" width="76" height="52" rx="9" fill="#FFFFFF" opacity=".06"/>
+     <circle cx="50" cy="42" r="9" fill="${IN}" stroke="${CR}"/>
+     <circle cx="50" cy="42" r="3" fill="${SK}" stroke="none"/>
+     <path d="M22 62 h 56" stroke="currentColor" stroke-width="1.6" opacity=".45"/>
+     <text x="50" y="69" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="11" font-weight="600" fill="${SK}" stroke="none">$UsnJrnl</text>
+     <circle cx="19" cy="31" r="1.8" fill="${CR}" stroke="none"/><circle cx="81" cy="31" r="1.8" fill="${CR}" stroke="none"/>
+     <circle cx="19" cy="69" r="1.8" fill="${CR}" stroke="none"/><circle cx="81" cy="69" r="1.8" fill="${CR}" stroke="none"/>`,
+    {...o,f,color:o.color||VI});};
+
+  /* 4. Канцелярская кнопка — пиксельный ромб */
+  const pin=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${SK}"/><stop offset=".55" stop-color="#A6E62E"/><stop offset="1" stop-color="${VI}"/></linearGradient>${OUT(f)}`,
+    `<ellipse cx="50" cy="86" rx="14" ry="4" fill="${IN}" opacity=".18" stroke="none"/>
+     <path d="M50 54 L50 82" stroke-width="3"/>
+     <path d="M50 82 L47 78 M50 82 L53 78" stroke-width="2.2"/>
+     <path d="M50 14 L63 27 L58 32 L68 42 L55 55 L50 50 L45 55 L32 42 L42 32 L37 27 Z" fill="url(#${id('g')})"/>
+     <path d="M50 14 L63 27 L58 32 L50 24 L45 32 L37 27 Z" fill="#FFFFFF" opacity=".22"/>
+     <path d="M44 28 l 4 4 M56 28 l -4 4" stroke="currentColor" stroke-width="1.8" opacity=".6"/>`,
+    {...o,f});};
+
+  /* 5. Молния в щите */
+  const shieldbolt=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FDFAF0"/><stop offset="1" stop-color="#E3DCC4"/></linearGradient>
+      <linearGradient id="${id('g2')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9D68F2"/><stop offset="1" stop-color="#5B2BB8"/></linearGradient>
+      <linearGradient id="${id('g3')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${SK}"/><stop offset="1" stop-color="#8FE21F"/></linearGradient>${OUT(f)}`,
+    `<path d="M50 10 C 60 19 74 21 83 21 C 83 48 74 67 50 86 C 26 67 17 48 17 21 C 26 21 40 19 50 10 Z" fill="url(#${id('g')})"/>
+     <path d="M50 17 C 58 24 70 26 77 26 C 77 47 70 63 50 79 C 30 63 23 47 23 26 C 30 26 42 24 50 17 Z" fill="url(#${id('g2')})" opacity=".35"/>
+     <path d="M56 25 L38 53 L50 53 L45 72 L64 42 L51 42 Z" fill="url(#${id('g3')})"/>
+     <path d="M56 25 L38 53" stroke="currentColor" stroke-width="1.6" opacity=".55"/>`,
+    {...o,f});};
+
+  /* 6. Скотч-полоска с точечным паттерном */
+  const tape=o=>{const f=id('f'), p=id('p');
+    return base(`<pattern id="${p}" width="10" height="10" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="1.3" fill="${SK}"/><circle cx="8" cy="8" r="1.3" fill="${VI}"/></pattern>
+      <linearGradient id="${id('g')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FDFAF0" stop-opacity=".92"/><stop offset="1" stop-color="#E8E0C8" stop-opacity=".88"/></linearGradient>${OUT(f)}`,
+    `<g transform="rotate(6 50 50)">
+       <path d="M10 35 L 26 33 L 21 40 L 27 46 L 20 51 L 24 60 L 12 62 L 14 47 L 9 42 Z" fill="url(#${id('g')})" opacity=".9" transform="translate(4 0) scale(.96 1) translate(2 0)"/>
+       <path d="M76 33 L 90 35 L 91 42 L 86 47 L 88 60 L 76 58 L 80 51 L 74 46 L 79 40 Z" fill="url(#${id('g')})" opacity=".9"/>
+       <rect x="24" y="33" width="54" height="28" fill="url(#${id('g')})" opacity=".9"/>
+       <rect x="24" y="33" width="54" height="28" fill="url(#${p})" opacity=".8" stroke="none"/>
+       <path d="M24 47 q 27 -3 54 0" stroke="currentColor" stroke-width="1.4" opacity=".4" stroke-dasharray="3 3"/>
+     </g>`,
+    {...o,f,color:o.color||CR});};
+
+  /* 7. Скрепка-осьминог со строкой кода */
+  const clipocto=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${SK}"/><stop offset="1" stop-color="#5B2BB8"/></linearGradient>${OUT(f)}`,
+    `<path d="M44 16 v 44 c 0 7 11 7 11 0 v -40 c 0 -6 -8 -6 -8 0 v 36 c 0 10 15 10 15 0 v -28" fill="none" stroke="url(#${id('g')})" stroke-width="5.5"/>
+     <path d="M44 16 v 44 c 0 7 11 7 11 0 v -40 c 0 -6 -8 -6 -8 0 v 36 c 0 10 15 10 15 0 v -28" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".4"/>
+     <circle cx="47" cy="34" r="3" fill="#FDFAF0"/><circle cx="47" cy="34" r="1.2" fill="${IN}" stroke="none"/>
+     <circle cx="56" cy="34" r="3" fill="#FDFAF0"/><circle cx="56" cy="34" r="1.2" fill="${IN}" stroke="none"/>
+     <path d="M30 74 q 8 -6 18 -1 M32 80 q 8 -5 16 -1 M34 86 q 7 -4 13 -1" stroke="${VI}" stroke-width="3.4"/>
+     <path d="M28 71 c -6 -2 -9 4 -4 6" stroke="${VI}" stroke-width="3.4"/>
+     <rect x="20" y="88" width="60" height="4" rx="2" fill="${VI}" stroke-width="1.6"/>
+     <text x="24" y="85.5" font-family="'JetBrains Mono',monospace" font-size="8" font-weight="600" fill="${SK}" stroke="none">fn:0x3F2A</text>`,
+    {...o,f});};
+
+  /* 8. Речевой пузырь "trace found!" */
+  const bubble=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8A8A"/><stop offset="1" stop-color="${CO}"/></linearGradient>${OUT(f)}`,
+    `<path d="M22 20 H 78 A 9 9 0 0 1 87 29 V 56 A 9 9 0 0 1 78 65 H 58 L 46 82 L 45 65 H 22 A 9 9 0 0 1 13 56 V 29 A 9 9 0 0 1 22 20 Z" fill="url(#${id('g')})"/>
+     <text x="50" y="48" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="14.5" font-weight="700" fill="${CR}" stroke="none">trace found!</text>
+     <path d="M20 28 q 4 -4 9 -4" stroke="#FFFFFF" stroke-width="3" opacity=".75"/>
+     <path d="M74 26 l 0 7 M70.5 29.5 l 7 0" stroke="currentColor" stroke-width="1.6" opacity=".55"/>`,
+    {...o,f,color:o.color||SK});};
+
+  /* 9. Четырёхконечная искра */
+  const spark=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${SK}"/><stop offset="1" stop-color="${VI}"/></linearGradient>${OUT(f)}`,
+    `<path d="M50 8 C 53 36 63 46 92 50 C 63 54 53 64 50 92 C 47 64 37 54 8 50 C 37 46 47 36 50 8 Z" fill="url(#${id('g')})"/>
+     <path d="M50 22 C 52 40 58 45 74 48" stroke="#FFFFFF" stroke-width="2.6" opacity=".6"/>
+     <path d="M26 68 C 27 74 30 77 35 79 C 29 80 25 84 25 90 C 24 84 21 80 15 79 C 21 77 24 74 25 68 Z" fill="currentColor" stroke-width="2"/>`,
+    {...o,f});};
+
+  /* 10. Жук-баг в кибер-стиле (черепок на панцире) */
+  const bug=o=>{const f=id('f');
+    return base(`<linearGradient id="${id('g')}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9D68F2"/><stop offset="1" stop-color="#4A21A0"/></linearGradient>
+      <linearGradient id="${id('g2')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FDFAF0"/><stop offset="1" stop-color="#E3DCC4"/></linearGradient>${OUT(f)}`,
+    `<path d="M28 46 q -10 2 -14 10 M27 56 q -9 5 -10 12 M29 66 q -7 6 -6 12 M72 46 q 10 2 14 10 M73 56 q 9 5 10 12 M71 66 q 7 6 6 12" stroke-width="2.6"/>
+     <path d="M42 22 q -4 -10 -9 -12 M58 22 q 4 -10 9 -12" stroke="${SK}" stroke-width="2.6"/>
+     <circle cx="31" cy="9" r="3.5" fill="${SK}"/><circle cx="69" cy="9" r="3.5" fill="${SK}"/>
+     <ellipse cx="50" cy="58" rx="24" ry="21" fill="url(#${id('g')})"/>
+     <path d="M50 37 v 42" stroke-width="2"/>
+     <circle cx="50" cy="31" r="11" fill="url(#${id('g2')})"/>
+     <circle cx="45.5" cy="29.5" r="2.4" fill="${IN}" stroke="none"/><circle cx="54.5" cy="29.5" r="2.4" fill="${IN}" stroke="none"/>
+     <path d="M46 45 q 4 2 8 0" stroke="${CR}" stroke-width="2"/>
+     <path d="M42 52 h 16 v 9 a 8 8 0 0 1 -16 0 Z" fill="${CR}" stroke-width="2"/>
+     <circle cx="46.5" cy="58" r="2.6" fill="${IN}" stroke="none"/><circle cx="53.5" cy="58" r="2.6" fill="${IN}" stroke="none"/>
+     <path d="M46 68 v 3 M50 68 v 3 M54 68 v 3" stroke="${CR}" stroke-width="1.8"/>
+     <path d="M38 74 q 12 4 24 0" stroke="currentColor" stroke-width="1.4" opacity=".45"/>`,
+    {...o,f,color:o.color||VI});};
+
+  const defs={journal,magnify,disk,pin,shieldbolt,tape,clipocto,bubble,spark,bug};
+  return {render:(name,opts)=>(defs[name]||defs.spark)(opts||{}), names:Object.keys(defs)};
+})();
+
+/* ================================================================
+   STICKER LAYER — drag & drop, localStorage, pop-звук, магнетизм
+================================================================ */
+const Stickers=(()=>{
+  const LS='journaltrace-stickers-v1', LS_SND='journaltrace-sound';
+  const layer=$('#sticker-layer');
+  let placed=[], zTop=1, soundOn=localStorage.getItem(LS_SND)==='1';
+  const mouse={x:-999,y:-999};
+  addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;},{passive:true});
+
+  /* --- синтезированный "pop" (Web Audio, без файлов) --- */
+  let actx=null;
+  function pop(){
+    if(!soundOn)return;
+    try{
+      actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+      if(actx.state==='suspended')actx.resume();
+      const t=actx.currentTime, o=actx.createOscillator(), g=actx.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(560,t);
+      o.frequency.exponentialRampToValueAtTime(170,t+.11);
+      g.gain.setValueAtTime(.0001,t);
+      g.gain.exponentialRampToValueAtTime(.28,t+.015);
+      g.gain.exponentialRampToValueAtTime(.0001,t+.13);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t+.15);
+    }catch(e){}
+  }
+
+  /* --- хранилище --- */
+  const save=()=>localStorage.setItem(LS,JSON.stringify(placed));
+  const load=()=>{try{placed=JSON.parse(localStorage.getItem(LS))||[];}catch(e){placed=[];}
+    zTop=placed.reduce((m,s)=>Math.max(m,s.z||1),1);};
+
+  /* --- DOM --- */
+  function el(s){
+    const d=document.createElement('div');
+    d.className='sticker'; d.dataset.id=s.id;
+    d.style.zIndex=s.z||1; d.setAttribute('role','button');
+    d.setAttribute('aria-label','Стикер '+s.stickerId+' — перетащите, двойной клик чтобы отклеить');
+    d.style.setProperty('--x',s.x+'px'); d.style.setProperty('--y',s.y+'px');
+    d.style.setProperty('--r',(s.rotation||0)+'deg');
+    const inner=document.createElement('span'); inner.className='sticker-inner';
+    const sz=Math.max(36,Math.min(72,innerWidth*.12));
+    inner.innerHTML=StickerKit.render(s.stickerId,{size:sz,color:'#C6FF3D'});
+    d.appendChild(inner);
+    d.addEventListener('pointerdown',e=>startDrag(e,d));
+    d.addEventListener('dblclick',()=>unstick(d));
+    layer.appendChild(d);
+    return d;
+  }
+
+  function startDrag(e,d){
+    if(e.button>0)return;
+    e.preventDefault();
+    const s=placed.find(p=>p.id===d.dataset.id); if(!s)return;
+    const inner=$('.sticker-inner',d);
+    const sx=e.clientX, sy=e.clientY, ox=s.x-e.clientX, oy=s.y-e.clientY;
+    const w=inner.offsetWidth||48, h=inner.offsetHeight||48;
+    let moved=false, lpTimer=null;
+
+    if(e.pointerType==='touch'){ // долгое нажатие = удалить
+      lpTimer=setTimeout(()=>{ if(!moved){ removeListeners(); unstick(d);} },600);
+    }
+    const move=ev=>{
+      if(!moved&&Math.hypot(ev.clientX-sx,ev.clientY-sy)>8){moved=true; clearTimeout(lpTimer);}
+      if(!moved)return;
+      d.classList.add('dragging');
+      s.x=clamp(ev.clientX+ox,4,innerWidth-w-4);
+      s.y=clamp(ev.clientY+oy,4,innerHeight-h-4);
+      const rot=clamp((ev.clientX-sx)*.35,-10,10);
+      d.style.setProperty('--x',s.x+'px'); d.style.setProperty('--y',s.y+'px');
+      d.style.setProperty('--r',rot+'deg'); d.style.setProperty('--s','1.15');
+    };
+    const up=()=>{
+      removeListeners();
+      if(!moved)return;
+      d.classList.remove('dragging');
+      d.style.setProperty('--s','1'); d.style.removeProperty('--r');
+      d.style.setProperty('--r',(s.rotation||0)+'deg');
+      d.classList.add('sticking');
+      setTimeout(()=>d.classList.remove('sticking'),650);
+      pop(); save();
+    };
+    const removeListeners=()=>{
+      clearTimeout(lpTimer);
+      removeEventListener('pointermove',move); removeEventListener('pointerup',up);
+      removeEventListener('pointercancel',up);
+    };
+    addEventListener('pointermove',move,{passive:true});
+    addEventListener('pointerup',up); addEventListener('pointercancel',up);
+  }
+
+  function unstick(d){
+    const id=d.dataset.id;
+    d.classList.add('unsticking');
+    d.style.setProperty('--x',(parseFloat(getComputedStyle(d).getPropertyValue('--x'))||0)+'px');
+    setTimeout(()=>{ d.remove(); placed=placed.filter(p=>p.id!==id); save(); updCnt(); },560);
+  }
+
+  function add(stickerId,x,y,fromPanel){
+    const s={id:'s'+Date.now()+Math.round(Math.random()*999), stickerId,
+      x:clamp(x,4,innerWidth-56), y:clamp(y,4,innerHeight-56),
+      rotation:Math.round((Math.random()*2-1)*7), z:++zTop};
+    placed.push(s); const d=el(s); save(); updCnt();
+    if(!fromPanel){ d.classList.add('sticking'); setTimeout(()=>d.classList.remove('sticking'),650); }
+    return {s,d};
+  }
+
+  /* Магнит к курсору в покое — мягкое притяжение */
+  (function magnet(){
+    if(!TOUCH){
+      layer.querySelectorAll('.sticker:not(.dragging)').forEach(d=>{
+        const r=d.getBoundingClientRect(), cx=r.left+r.width/2, cy=r.top+r.height/2;
+        const dx=mouse.x-cx, dy=mouse.y-cy, dist=Math.hypot(dx,dy);
+        if(dist<80&&dist>1){const f=(1-dist/80)*7;
+          d.style.setProperty('--mx',(dx/dist*f)+'px'); d.style.setProperty('--my',(dy/dist*f)+'px');}
+        else{d.style.setProperty('--mx','0px'); d.style.setProperty('--my','0px');}
+      });
+    }
+    requestAnimationFrame(magnet);
+  })();
+
+  const updCnt=()=>$('#sp-cnt').textContent=placed.length+' на странице';
+
+  /* --- панель --- */
+  const grid=$('#sp-grid');
+  StickerKit.names.forEach(name=>{
+    const b=document.createElement('button');
+    b.title=name; b.setAttribute('aria-label','Стикер: '+name);
+    b.innerHTML=StickerKit.render(name,{size:36,color:'#C6FF3D'});
+    b.addEventListener('pointerdown',e=>{
+      if(e.button>0)return;
+      if(TOUCH){ // tap = установка по центру с разбросом
+        add(name, innerWidth/2-28+(Math.random()*80-40), innerHeight*0.42+(Math.random()*80-40));
+        return;
+      }
+      e.preventDefault();
+      const {s,d}=add(name, e.clientX-24, e.clientY-24, true);
+      const ox=s.x-e.clientX, oy=s.y-e.clientY;
+      d.classList.add('dragging');
+      const move=ev=>{ s.x=clamp(ev.clientX+ox,4,innerWidth-52); s.y=clamp(ev.clientY+oy,4,innerHeight-52);
+        d.style.setProperty('--x',s.x+'px'); d.style.setProperty('--y',s.y+'px');
+        d.style.setProperty('--s','1.15');};
+      const up=()=>{ removeEventListener('pointermove',move); removeEventListener('pointerup',up);
+        d.classList.remove('dragging'); d.style.setProperty('--s','1');
+        d.classList.add('sticking'); setTimeout(()=>d.classList.remove('sticking'),650);
+        pop(); save();};
+      addEventListener('pointermove',move,{passive:true});
+      addEventListener('pointerup',up);
+    });
+    grid.appendChild(b);
   });
-}
+
+  $('#sp-clear').addEventListener('click',()=>{
+    const all=layer.querySelectorAll('.sticker'); let i=0;
+    all.forEach(d=>setTimeout(()=>unstick(d),i++*70));
+  });
+  const sndBtn=$('#sp-sound');
+  const syncSnd=()=>sndBtn.classList.toggle('on',soundOn);
+  sndBtn.addEventListener('click',()=>{soundOn=!soundOn;
+    localStorage.setItem(LS_SND,soundOn?'1':'0'); syncSnd(); if(soundOn)pop();});
+  syncSnd();
+  $('#sp-collapse').addEventListener('click',()=>document.body.classList.add('sp-collapsed'));
+  $('#sp-fab').innerHTML=StickerKit.render('spark',{size:28,color:'#C6FF3D'});
+  $('#sp-fab').addEventListener('click',()=>document.body.classList.remove('sp-collapsed'));
+  if(TOUCH)document.body.classList.add('sp-collapsed');
+
+  /* --- восстановление --- */
+  load();
+  placed.forEach(s=>{
+    s.x=clamp(s.x,4,Math.max(4,innerWidth-56)); s.y=clamp(s.y,4,Math.max(4,innerHeight-56));
+    el(s);
+  });
+  updCnt();
+})();
+
+/* ================================================================
+   INTERACTIVE DEMO — симулятор фильтров JournalTrace
+================================================================ */
+(()=>{
+  let seed=1337; const rnd=()=>((seed=seed*1664525+1013904223>>>0)/4294967296);
+
+  const REASONS=[
+    {id:'FileDelete',cls:'r-del',c:'#FF6B6B',q:'delete'},
+    {id:'Rename_New_Name',cls:'r-ren',c:'#B79CFF',q:'rename'},
+    {id:'BasicInfoChange',cls:'r-bic',c:'#F5F0E1',q:'basicinfo'},
+    {id:'Data_Overwrite',cls:'r-ovr',c:'#C6FF3D',q:'overwrite'},
+    {id:'FileCreate',cls:'r-cr',c:'#9BE8A0',q:'create'},
+  ];
+  const NAMES=[
+    ['svchost.exe','C:\\Windows\\System32'],['svchost.exe','C:\\Windows\\System32'],
+    ['powershell.exe','C:\\Windows\\System32\\WindowsPowerShell\\v1.0'],
+    ['POWERSHELL.EXE-0F3A21.pf','C:\\Windows\\Prefetch'],
+    ['CMD.EXE-A1B2C3.pf','C:\\Windows\\Prefetch'],
+    ['~DF8C21.tmp','C:\\Users\\admin\\AppData\\Local\\Temp'],
+    ['tmp3F2A.dat','C:\\Users\\admin\\AppData\\Local\\Temp'],
+    ['~DFE19.tmp','C:\\Users\\admin\\AppData\\Local\\Temp'],
+    ['KeePass.kdbx','C:\\Users\\admin\\Documents'],
+    ['ntds.dit','C:\\Windows\\NTDS'],
+    ['lsass.dmp','C:\\Users\\admin\\Desktop'],
+    ['index.dat','C:\\Users\\admin\\AppData\\Local\\Microsoft\\Windows\\History'],
+    ['SAM.log','C:\\Windows\\System32\\config'],
+    ['$MFT','C:\\'],['$UsnJrnl:$J','C:\\'],
+    ['README.md.txt','C:\\Users\\admin\\Downloads'],
+    ['backup_2024.zip','C:\\Users\\admin\\Documents'],
+    ['kernel32.dll','C:\\Windows\\System32'],
+    ['MsMpEng.log','C:\\ProgramData\\Microsoft\\Windows Defender'],
+    ['JT_cache.dat','C:\\Users\\admin\\AppData\\Local\\Temp'],
+    ['outlook.pst','C:\\Users\\admin\\Documents'],
+    ['x.ps1','C:\\Users\\admin\\AppData\\Roaming'],
+    ['ransom_note.txt','C:\\Users\\admin\\Desktop'],
+    ['doc.tmp','C:\\Users\\admin\\Documents'],
+    ['report_final_v2.docx','C:\\Users\\admin\\Documents'],
+    ['chrome_bookmarks.json','C:\\Users\\admin\\AppData\\Local\\Google\\Chrome'],
+  ];
+  const N=44, rows=[];
+  const t0=Date.now()-N*47000;
+  for(let i=0;i<N;i++){
+    const [name,path]=NAMES[Math.floor(rnd()*NAMES.length)];
+    const r=REASONS[Math.floor(rnd()*REASONS.length)];
+    const d=new Date(t0+i*47000+Math.floor(rnd()*30000));
+    rows.push({
+      time:d.toTimeString().slice(0,8), name, path,
+      reason:r.id, reasonQ:r.q, rcls:r.cls,
+      frn:'0x'+(0x20000+Math.floor(rnd()*0xFFFFF)).toString(16).toUpperCase(),
+      low:(name+' '+path+' '+r.id+' '+r.q).toLowerCase(),
+      _name:name.toLowerCase(),_path:path.toLowerCase(),_reason:(r.id+' '+r.q).toLowerCase(),
+    });
+  }
+
+  const COLS=['name','reason','path','time','frn'];
+  const tokenize=t=>{
+    t=t.trim(); if(!t)return null;
+    const i=t.indexOf(':');
+    if(i>0&&COLS.includes(t.slice(0,i).toLowerCase()))
+      return {col:t.slice(0,i).toLowerCase(),val:t.slice(i+1).toLowerCase()};
+    return {col:'all',val:t.toLowerCase()};
+  };
+  function parse(str){
+    const clauses=str.split(';').filter(c=>c.trim()).map(cl=>cl.split('&&').map(t=>{
+      const alts=t.split('||').map(a=>{
+        const parts=a.split('!!').map(p=>p.trim()).filter(Boolean);
+        if(!parts.length)return null;
+        return {pos:tokenize(parts[0])||{col:'all',val:''},
+                neg:parts.slice(1).map(n=>tokenize(n)).filter(Boolean)};
+      }).filter(Boolean);
+      return alts;
+    }));
+    return {clauses, ok: clauses.every(cl=>cl.every(alt=>alt.length)) && clauses.length>0};
+  }
+  const field=(row,col)=>col==='name'?row._name:col==='reason'?row._reason:col==='path'?row._path:
+    col==='time'?row.time.toLowerCase():col==='frn'?row.frn.toLowerCase():row.low;
+  const has=(row,tok)=>tok.val&&field(row,tok.col).includes(tok.val);
+  const matchAlt=(row,alt)=>has(row,alt.pos)&&!alt.neg.some(n=>has(row,n));
+  const matchRow=(row,f)=>f.clauses.every(cl=>cl.every(alts=>alts.some(alt=>matchAlt(row,alt))));
+
+  const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function hi(text,toks){
+    let html=esc(text); if(!toks.length)return html;
+    const low=text.toLowerCase();
+    const ranges=[];
+    toks.forEach(tok=>{
+      if(!tok.val)return;
+      let i=0;
+      while((i=low.indexOf(tok.val,i))!==-1){ranges.push([i,i+tok.val.length]); i+=tok.val.length;}
+    });
+    if(!ranges.length)return html;
+    ranges.sort((a,b)=>a[0]-b[0]);
+    const merged=[ranges[0]];
+    for(const r of ranges.slice(1)){
+      const l=merged[merged.length-1];
+      if(r[0]<=l[1])l[1]=Math.max(l[1],r[1]); else merged.push(r);
+    }
+    let out='',p=0;
+    for(const [a,b] of merged){out+=esc(text.slice(p,a))+'<mark>'+esc(text.slice(a,b))+'</mark>';p=b;}
+    return out+esc(text.slice(p));
+  }
+
+  const tb=$('#rows'), empty=$('#demo-empty');
+  function render(f){
+    tb.innerHTML='';
+    const filtered=f.clauses.length?rows.filter(r=>matchRow(r,f)):rows;
+    const toks=[]; f.clauses.forEach(cl=>cl.forEach(alts=>alts.forEach(a=>{if(a.pos.val)toks.push(a.pos);})));
+    let delay=0;
+    filtered.slice(0,60).forEach(r=>{
+      const tr=document.createElement('tr'); tr.style.animationDelay=Math.min(delay,400)+'ms'; delay+=28;
+      tr.innerHTML=`<td><time>${hi(r.time,toks.filter(t=>['all','time'].includes(t.col)))}</time></td>
+        <td><span class="fname">${hi(r.name,toks.filter(t=>['all','name'].includes(t.col)))}</span><span class="fpath">${hi(r.path,toks.filter(t=>['all','path'].includes(t.col)))}</span></td>
+        <td><span class="rbadge ${r.rcls}">${hi(r.reason,toks.filter(t=>['all','reason'].includes(t.col)))}</span></td>
+        <td>${hi(r.frn,toks.filter(t=>['all','frn'].includes(t.col)))}</td>`;
+      tb.appendChild(tr);
+    });
+    empty.hidden=filtered.length>0;
+    $('#stat-total').textContent=rows.length;
+    $('#stat-found').textContent=filtered.length;
+    const msg=$('#stat-msg');
+    if(f.clauses.length&&!f.ok){msg.innerHTML='<span class="bad">фильтр не завершён — добавьте значение</span>';}
+    else if(f.clauses.length){msg.textContent='фильтр активен';}
+    else msg.textContent='';
+  }
+
+  const input=$('#flt'); let tmr;
+  const apply=()=>{ const v=input.value.trim();
+    input.classList.toggle('err',!!v&&!parse(v).ok);
+    render(v?parse(v):{clauses:[],ok:true}); };
+  input.addEventListener('input',()=>{clearTimeout(tmr);tmr=setTimeout(apply,120);});
+  $$('#presets .preset').forEach(b=>b.addEventListener('click',()=>{input.value=b.textContent;apply();input.focus();}));
+
+  const leg=$('#reason-legend');
+  REASONS.forEach(r=>{
+    const b=document.createElement('button'); b.className='rl';
+    b.innerHTML=`<i style="background:${r.c}"></i>${r.id}`;
+    b.addEventListener('click',()=>{input.value=(input.value?input.value+';':'')+'reason:'+r.q;apply();});
+    leg.appendChild(b);
+  });
+  render({clauses:[],ok:true});
+})();
 </script>
 </body>
 </html>
